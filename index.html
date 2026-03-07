@@ -1471,37 +1471,24 @@
     /* ──────────────── GAS API URL ──────────────── */
     const GAS_API_URL = 'https://script.google.com/macros/s/AKfycby2xg1SGQjhn4NT1EgDNlcbKXsT8bzh4_G3zkM4uY3u7FXr-oUFXeE1DvgzDyV_9Uzjmw/exec';
 
-    /* ──────────────── fetch 기반 callServer ──────────────── */
+    /* ──────────────── fetch 기반 callServer (GET only) ──────────────── */
     function callServer(actionName, payload, onOk, onFail) {
       const fail = onFail || function (e) { alert(err2str(e)); };
       const ok = onOk || function () { };
+      const action = actionName.replace(/^api_/, '');
 
-      if (!payload || actionName === 'api_getInitialData') {
-        // GET 요청 (데이터 읽기)
-        fetch(GAS_API_URL + '?action=getInitialData')
-          .then(r => r.json())
-          .then(data => {
-            if (data && data.error) { fail(data.error); return; }
-            ok(data);
-          })
-          .catch(e => fail(e));
-      } else {
-        // POST 요청 (데이터 쓰기)
-        // actionName에서 api_ 접두어 제거
-        const action = actionName.replace(/^api_/, '');
-        const body = Object.assign({}, payload, { action: action });
-        fetch(GAS_API_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'text/plain' },
-          body: JSON.stringify(body)
-        })
-          .then(r => r.json())
-          .then(data => {
-            if (data && data.error) { fail(data.error); return; }
-            ok(data);
-          })
-          .catch(e => fail(e));
+      let url = GAS_API_URL + '?action=' + encodeURIComponent(action);
+      if (payload) {
+        url += '&data=' + encodeURIComponent(JSON.stringify(payload));
       }
+
+      fetch(url)
+        .then(r => r.json())
+        .then(data => {
+          if (data && data.error) { fail(data.error); return; }
+          ok(data);
+        })
+        .catch(e => fail(e));
     }
 
     /* ──────────────── Data normalization ──────────────── */
