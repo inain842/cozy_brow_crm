@@ -1471,7 +1471,7 @@
     /* ──────────────── GAS API URL ──────────────── */
     const GAS_API_URL = 'https://script.google.com/macros/s/AKfycby2xg1SGQjhn4NT1EgDNlcbKXsT8bzh4_G3zkM4uY3u7FXr-oUFXeE1DvgzDyV_9Uzjmw/exec';
 
-    /* ──────────────── fetch 기반 callServer (GET only) ──────────────── */
+    /* ──────────────── fetch 기반 callServer (Safari/PWA 302 리다이렉트 안전) ──────────────── */
     function callServer(actionName, payload, onOk, onFail) {
       const fail = onFail || function (e) { alert(err2str(e)); };
       const ok = onOk || function () { };
@@ -1482,13 +1482,60 @@
         url += '&data=' + encodeURIComponent(JSON.stringify(payload));
       }
 
-      fetch(url)
-        .then(r => r.json())
-        .then(data => {
-          if (data && data.error) { fail(data.error); return; }
-          ok(data);
-        })
-        .catch(e => fail(e));
+      /**
+       * 모바일 Safari / PWA(홈 화면 추가 앱)에서는
+       * GAS 배포 URL이 302 리다이렉트를 거치며 fetch가 body를 잃어버리거나
+       * opaque response를 반환하는 문제가 있음.
+       *
+       * 해결 전략:
+       * 1) fetch + redirect:'follow' + r.text() → JSON.parse  (우선 시도)
+       * 2) 실패 시 XMLHttpRequest fallback
+       */
+      function parseJSON(text) {
+        try { return JSON.parse(text); }
+        catch (_) { return null; }
+      }
+
+      function handleResult(data) {
+        if (!data) { fail('서버 응답을 파싱할 수 없습니다.'); return; }
+        if (data.error) { fail(data.error); return; }
+        ok(data);
+      }
+
+      /* ── 방법 1: fetch (redirect:follow 명시, text 파싱) ── */
+      function tryFetch() {
+        return fetch(url, { method: 'GET', redirect: 'follow' })
+          .then(function (r) {
+            if (!r.ok && r.type === 'opaque') throw new Error('opaque');
+            return r.text();
+          })
+          .then(function (txt) {
+            var data = parseJSON(txt);
+            if (!data) throw new Error('json_parse');
+            handleResult(data);
+          });
+      }
+
+      /* ── 방법 2: XMLHttpRequest fallback (리다이렉트 자동 follow) ── */
+      function tryXHR() {
+        return new Promise(function (resolve, reject) {
+          var xhr = new XMLHttpRequest();
+          xhr.open('GET', url, true);
+          xhr.onload = function () {
+            if (xhr.status >= 200 && xhr.status < 400) {
+              var data = parseJSON(xhr.responseText);
+              handleResult(data);
+              resolve();
+            } else { reject(new Error('XHR status ' + xhr.status)); }
+          };
+          xhr.onerror = function () { reject(new Error('XHR network error')); };
+          xhr.send();
+        });
+      }
+
+      tryFetch().catch(function () {
+        return tryXHR();
+      }).catch(function (e) { fail(e); });
     }
 
     /* ──────────────── Data normalization ──────────────── */
