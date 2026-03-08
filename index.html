@@ -760,6 +760,23 @@
       background: rgba(255, 255, 255, .7);
     }
 
+    /* 이슈 고객이 있는 날 */
+    .cal-cell.has-issue {
+      border-color: rgba(160, 48, 48, .35);
+    }
+    .cal-cell.has-issue:not(.selected):not(.today) {
+      background: #fff8f8;
+    }
+    .issue-pin {
+      font-size: 8px;
+      vertical-align: super;
+      margin-left: 1px;
+      color: var(--danger);
+    }
+    .cal-cell.today .issue-pin {
+      color: rgba(255,255,255,.85);
+    }
+
     /* ── BOTTOM NAV ── */
     nav.bottom-nav {
       position: fixed;
@@ -1562,7 +1579,16 @@
       return o;
     }
 
-    /* ──────────────── Boot ──────────────── */
+    /* ──────────────── 부분 새로고침 (저장 후 화면 유지) ──────────────── */
+    function refreshFromServer(onDone) {
+      callServer('api_getInitialData', undefined, function(res) {
+        db = normalizeData(res);
+        document.getElementById('headerDate').textContent = compactDisplay(db.today) + ' 기준';
+        if (!selectedDate) selectedDate = db.today;
+        if (typeof onDone === 'function') onDone();
+        renderAll();
+      }, function(e) { console.warn('부분 새로고침 실패, 로컬 렌더만 수행', e); renderAll(); });
+    }
     function boot() {
       showSplash('최신 데이터를 불러오는 중...');
       clearTimeout(window.__bootTimer);
@@ -1959,25 +1985,54 @@
 
       const firstDay = new Date(y, m, 1).getDay(), lastDate = new Date(y, m + 1, 0).getDate();
       let html = WD.map(d => `<div class="cal-day-label">${d}</div>`).join('');
-      for (let i = 0; i < firstDay; i++)html += '<div class="cal-cell empty"></div>';
+      for (let i = 0; i < firstDay; i++) html += '<div class="cal-cell empty"></div>';
 
       for (let d = 1; d <= lastDate; d++) {
         const iso = y + '-' + pad(m + 1) + '-' + pad(d);
-        const count = (db.APPT || []).filter(a => normalizeDate(a.예약일자 || a.예약일) === iso).length;
+        const dayAppts = (db.APPT || []).filter(a => normalizeDate(a.예약일자 || a.예약일) === iso);
+        const count = dayAppts.length;
+        /* 이슈 고객 포함 여부 체크 */
+        const hasIssue = dayAppts.some(a => {
+          const c = getCustById(a.고객ID);
+          return c && custHasIssue(c);
+        });
         let cls = 'cal-cell';
         if (count > 0) cls += ' has-appt';
         if (iso === selectedDate) cls += ' selected';
         if (iso === db.today) cls += ' today';
-        html += `<button class="${cls}" onclick="selectDate('${iso}')"><div>${d}</div><div class="dots">${new Array(Math.min(count, 3)).fill('<span class="dot"></span>').join('')}</div></button>`;
+        if (hasIssue) cls += ' has-issue';
+        const dots = new Array(Math.min(count, 3)).fill('<span class="dot"></span>').join('');
+        const issuePin = hasIssue ? '<span class="issue-pin">⚠</span>' : '';
+        html += `<button class="${cls}" onclick="selectDate('${iso}')"><div>${d}${issuePin}</div><div class="dots">${dots}</div></button>`;
       }
       document.getElementById('calendar').innerHTML = html;
-      document.getElementById('selectedDateLabel').textContent = compactDisplay(selectedDate) + ' 예약 현황';
 
       const rows = (db.APPT || []).filter(a => normalizeDate(a.예약일자 || a.예약일) === selectedDate).sort((a, b) => String(a.예약시간 || '').localeCompare(String(b.예약시간 || '')));
+      const totalCnt = rows.length;
+      const issueCnt = rows.filter(a => { const c = getCustById(a.고객ID); return c && custHasIssue(c); }).length;
+      const issueNote = issueCnt > 0 ? ` <span style="color:var(--danger);font-size:11px;font-weight:700;">⚠ 이슈 ${issueCnt}명</span>` : '';
+      document.getElementById('selectedDateLabel').innerHTML = compactDisplay(selectedDate) + ' 예약 현황' + (totalCnt ? ` <span style="color:var(--sub);font-size:12px;">${totalCnt}건</span>` : '') + issueNote;
+
       document.getElementById('dayApptList').innerHTML = rows.length
         ? rows.map(a => {
           const bc = String(a.상태 || '') === '완료' ? 'b-done' : 'b-open';
-          return `<div class="item" onclick="openComplete('${esc(a.예약ID || '')}')"><div class="avatar">${esc(initials(getApptName(a)))}</div><div class="item-inner"><div class="item-title">${esc(a.예약시간 || '-')} · ${esc(getApptName(a))}</div><div class="item-sub">${esc(a.시술항목 || '상담')} · 예상 ${money(a.예상매출 || a.예상금액 || 0)}</div></div><div class="item-right"><span class="badge ${bc}">${esc(a.상태 || '예약')}</span></div></div>`;
+          const cust = getCustById(a.고객ID);
+          const hasIssue = cust && custHasIssue(cust);
+          const consentOk = cust ? custConsent(cust) : true;
+          const issueFlag = cust ? custIssueFlag(cust) : false;
+          const issueBadges = [
+            !consentOk ? '<span class="badge b-issue" style="font-size:9px;">미동의</span>' : '',
+            issueFlag  ? '<span class="badge b-issue" style="font-size:9px;">이슈</span>' : ''
+          ].filter(Boolean).join(' ');
+          return `
+          <div class="item" onclick="openComplete('${esc(a.예약ID || '')}')">
+            <div class="avatar" style="${hasIssue ? 'background:var(--danger-bg);color:var(--danger);' : ''}">${esc(initials(getApptName(a)))}</div>
+            <div class="item-inner">
+              <div class="item-title">${esc(a.예약시간 || '-')} · ${esc(getApptName(a))} ${issueBadges}</div>
+              <div class="item-sub">${esc(a.시술항목 || '상담')} · 예상 ${money(a.예상매출 || a.예상금액 || 0)}</div>
+            </div>
+            <div class="item-right"><span class="badge ${bc}">${esc(a.상태 || '예약')}</span></div>
+          </div>`;
         }).join('')
         : '<div class="empty-state"><div class="empty-icon">📋</div>선택일 예약이 없습니다.</div>';
     }
@@ -2384,9 +2439,100 @@
       </div>
       <div class="sheet-footer">
         <button class="btn btn-ghost" onclick="closeSheet()">닫기</button>
+        <button class="btn btn-secondary btn-sm" onclick="openCustomerEdit('${esc(id)}')">✏️ 수정</button>
         <button class="btn btn-primary" onclick="openSheet('appt_with_cust','${esc(id)}')">예약 등록</button>
       </div>`;
       document.getElementById('overlay').style.display = 'flex';
+    }
+
+    /* 고객 카드 수정 폼 */
+    function openCustomerEdit(id) {
+      const c = getCustById(id);
+      if (!c) return;
+      /* 방문일 ISO 변환 */
+      const visitISO = normalizeDate(c.방문일 || c.예약일 || '');
+      const retouchISO = normalizeDate(c.리터치일 || '');
+
+      document.getElementById('sheetBody').innerHTML = `
+      <div class="sheet-title">고객 카드 수정</div>
+      <div class="sheet-sub">${esc(c.고객ID || '')} · 수정 후 저장하면 시트에 반영됩니다.</div>
+      <div style="height:14px"></div>
+      <div class="form-row">
+        <div class="form-block"><label class="label">성명 *</label><input id="eCustName" class="field" value="${esc(c.성함 || '')}"></div>
+        <div class="form-block"><label class="label">연락처 *</label><input id="eCustPhone" class="field" type="tel" value="${esc(c.연락처 || '')}"></div>
+      </div>
+      <div class="form-row">
+        <div class="form-block"><label class="label">방문일</label><input id="eCustVisit" class="field" type="date" value="${esc(visitISO)}"></div>
+        <div class="form-block"><label class="label">리터치 예정일</label><input id="eCustRetouch" class="field" type="date" value="${esc(retouchISO)}"></div>
+      </div>
+      <div class="form-block"><label class="label">시술 항목</label>
+        <select id="eCustService" class="select">
+          <option value="">시술 선택</option>
+          ${getServiceRows().map(r => `<option value="${esc(r.시술항목)}" ${r.시술항목 === c.시술항목 ? 'selected' : ''}>${esc(r.시술항목)}</option>`).join('')}
+          ${!getServiceRows().find(r => r.시술항목 === c.시술항목) && c.시술항목 ? `<option value="${esc(c.시술항목)}" selected>${esc(c.시술항목)}</option>` : ''}
+        </select>
+      </div>
+      <div class="form-row">
+        <div class="form-block"><label class="label">동의서 동의</label>
+          <select id="eCustConsent" class="select">
+            <option value="Y" ${custConsent(c) ? 'selected' : ''}>✓ 동의</option>
+            <option value="N" ${!custConsent(c) ? 'selected' : ''}>✗ 미동의</option>
+          </select>
+        </div>
+        <div class="form-block" style="display:flex;align-items:center;">
+          <div><label class="label">시술 이슈</label>
+            <div class="switch-row">
+              <input id="eCustIssueFlag" type="checkbox" ${custIssueFlag(c) ? 'checked' : ''}>
+              <label for="eCustIssueFlag">이슈 있음</label>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="form-block"><label class="label">특이사항 / 메모</label>
+        <textarea id="eCustNote" class="textarea">${esc(c.특이사항 || c.메모 || '')}</textarea>
+      </div>
+      <div class="sheet-footer">
+        <button class="btn btn-ghost" onclick="openCustomerDetail('${esc(id)}')">← 돌아가기</button>
+        <button class="btn btn-primary" onclick="saveCustomerEdit('${esc(id)}')">💾 수정 저장</button>
+      </div>`;
+    }
+
+    function saveCustomerEdit(id) {
+      const name  = (document.getElementById('eCustName')  || { value: '' }).value.trim();
+      const phone = (document.getElementById('eCustPhone') || { value: '' }).value.trim();
+      const p = {
+        id,
+        name,
+        phone,
+        visitDate:   document.getElementById('eCustVisit').value,
+        retouchDate: document.getElementById('eCustRetouch').value,
+        service:     document.getElementById('eCustService').value,
+        consent:     document.getElementById('eCustConsent').value,
+        issue:       document.getElementById('eCustIssueFlag').checked ? 'Y' : 'N',
+        note:        document.getElementById('eCustNote').value.trim()
+      };
+      if (!p.name || !p.phone) { alert('성명과 연락처는 필수입니다.'); return; }
+      toast('수정 저장 중...');
+      callServer('api_updateCustomer', p, () => {
+        /* db 로컬 즉시 반영 → 화면 이동 없이 상세로 돌아감 */
+        const idx = (db.CUSTOMER || []).findIndex(c => String(c.고객ID || '') === String(id));
+        if (idx >= 0) {
+          const c = db.CUSTOMER[idx];
+          if (p.name)        c.성함 = p.name;
+          if (p.phone)       c.연락처 = p.phone;
+          if (p.visitDate)   { c.방문일 = p.visitDate; c.예약일 = p.visitDate; }
+          if (p.retouchDate) c.리터치일 = p.retouchDate;
+          if (p.service)     c.시술항목 = p.service;
+          c.동의서동의 = p.consent;
+          c['시술이슈'] = p.issue;
+          c['시술이슈체크'] = p.issue;
+          c.특이사항 = p.note;
+          c.메모 = p.note;
+        }
+        toast('✓ 수정 완료');
+        openCustomerDetail(id);  /* 저장 후 상세로 돌아감 (화면 이동 없음) */
+        renderCust();
+      }, e => alert(err2str(e)));
     }
 
     function openExpenseDetail(id) {
@@ -2450,7 +2596,7 @@
       if (!p.visitDate) { alert('방문일 / 예약일을 반드시 입력해주세요.\n(과거 고객은 실제 방문일을 선택하세요.)'); return; }
       toast('고객 카드 저장 중...');
       const apiName = p.apptId ? 'api_registerCustomerAfterTreatment' : 'api_createCustomer';
-      callServer(apiName, p, () => { closeSheet(); boot(); toast('✓ 고객 카드 등록 완료'); }, e => alert(err2str(e)));
+      callServer(apiName, p, () => { closeSheet(); toast('✓ 고객 카드 등록 완료'); refreshFromServer(); }, e => alert(err2str(e)));
     }
 
     function saveAppt() {
@@ -2468,7 +2614,7 @@
       };
       if (!p.custName) { alert('성함을 입력해주세요.'); return; }
       toast('예약 저장 중...');
-      callServer('api_createAppointment', p, () => { closeSheet(); boot(); toast('✓ 예약 등록 완료'); }, e => alert(err2str(e)));
+      callServer('api_createAppointment', p, () => { closeSheet(); toast('✓ 예약 등록 완료'); refreshFromServer(); }, e => alert(err2str(e)));
     }
 
     function saveComplete(apptId) {
@@ -2481,7 +2627,7 @@
         date: normalizeDate(a.예약일자 || a.예약일) || db.today
       };
       toast('완료 처리 중...');
-      callServer('api_completeAppointment', p, () => { closeSheet(); boot(); toast('✓ 완료 처리되었습니다.'); }, e => alert(err2str(e)));
+      callServer('api_completeAppointment', p, () => { closeSheet(); toast('✓ 완료 처리되었습니다.'); refreshFromServer(); }, e => alert(err2str(e)));
     }
 
     /* 완료 + 고객카드 등록 */
@@ -2497,10 +2643,9 @@
       toast('완료 처리 중...');
       callServer('api_completeAppointment', p, () => {
         closeSheet();
-        // 고객 카드 등록 시트 열기 (성함/연락처 프리필)
         openSheet('cust', { name: custName, phone: custPhone, apptId: apptId });
         toast('✓ 완료! 고객 카드를 작성해주세요.');
-        boot();
+        refreshFromServer();
       }, e => alert(err2str(e)));
     }
 
@@ -2518,7 +2663,7 @@
       };
       if (!p.customerId || !p.service || !p.paid) { alert('고객, 시술 항목, 금액은 필수입니다.'); return; }
       toast('매출 저장 중...');
-      callServer('api_addSale', p, () => { closeSheet(); boot(); toast('✓ 매출 저장 완료'); }, e => alert(err2str(e)));
+      callServer('api_addSale', p, () => { closeSheet(); toast('✓ 매출 저장 완료'); refreshFromServer(); }, e => alert(err2str(e)));
     }
 
     function saveExpense() {
@@ -2537,7 +2682,7 @@
       };
       if (!p.account || !p.amount) { alert('계정과목과 금액은 필수입니다.'); return; }
       toast('지출 저장 중...');
-      callServer('api_addExpense', p, () => { closeSheet(); boot(); toast('✓ 지출 저장 완료'); }, e => alert(err2str(e)));
+      callServer('api_addExpense', p, () => { closeSheet(); toast('✓ 지출 저장 완료'); refreshFromServer(); }, e => alert(err2str(e)));
     }
 
     function bulkResolveIssues() {
@@ -2545,7 +2690,7 @@
       if (!ids.length) { alert('해소할 이슈 고객이 없습니다.'); return; }
       if (!confirm(`이슈 고객 ${ids.length}명 동의서 일괄 처리할까요?`)) return;
       toast('일괄 처리 중...');
-      callServer('api_bulkResolveCustomerIssues', { ids: ids }, () => { boot(); toast('✓ 이슈 일괄 해소 완료'); }, e => alert(err2str(e)));
+      callServer('api_bulkResolveCustomerIssues', { ids: ids }, () => { toast('✓ 이슈 일괄 해소 완료'); refreshFromServer(); }, e => alert(err2str(e)));
     }
 
     /* ──────────────── Error handlers ──────────────── */
