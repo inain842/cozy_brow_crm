@@ -1478,18 +1478,29 @@
     function initials(name) { return String(name || '?').trim().charAt(0) || '?'; }
     function err2str(e) { if (!e) return '알 수 없는 오류'; if (typeof e === 'string') return e; return e.message || String(e) || '오류'; }
 
-    /* 날짜 정규화: 240505 → 2024-05-05 */
+    /* 날짜 정규화: 다양한 형식 → yyyy-MM-dd */
     function normalizeDate(v) {
+      if (v instanceof Date) {
+        if (isNaN(v.getTime())) return '';
+        return v.getFullYear() + '-' + pad(v.getMonth() + 1) + '-' + pad(v.getDate());
+      }
       const s = String(v || '').trim();
       if (!s) return '';
       if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+      /* ISO timestamp: 2026-03-09T15:00:00.000Z → 2026-03-09 */
+      if (/^\d{4}-\d{2}-\d{2}T/.test(s)) return s.slice(0, 10);
       if (/^\d{8}$/.test(s)) return s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8);
-      /* 6자리: 240505 → 2024-05-05 */
       if (/^\d{6}$/.test(s)) return '20' + s.slice(0, 2) + '-' + s.slice(2, 4) + '-' + s.slice(4, 6);
-      /* 점/슬래시 구분 */
       const d = new Date(s.replace(/\./g, '-').replace(/\//g, '-'));
       if (!isNaN(d.getTime())) return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
       return '';
+    }
+
+    /* APPT 날짜 추출 헬퍼 — 가능한 모든 컬럼명 대응 */
+    function getApptDate(a) {
+      return normalizeDate(
+        a.예약일자 || a.예약일 || a.일자 || a.date || a.Date || ''
+      );
     }
 
     /* YY-MM-DD(요일) 형식 */
@@ -1740,7 +1751,7 @@
     /* ──────────────── Dashboard ──────────────── */
     function renderDash() {
       const today = normalizeDate(db.today);
-      const todayAppts = (db.APPT || []).filter(a => normalizeDate(a.예약일자 || a.예약일) === today).sort((a, b) => String(a.예약시간 || '').localeCompare(String(b.예약시간 || '')));
+      const todayAppts = (db.APPT || []).filter(a => getApptDate(a) === today).sort((a, b) => String(a.예약시간 || '').localeCompare(String(b.예약시간 || '')));
       const todaySales = (db.SALES || []).filter(s => normalizeDate(s.일자) === today).reduce((s, r) => s + Number(r.실결제금액 || 0) - Number(r.환불금액 || 0), 0);
       const monthSales = (db.SALES || []).filter(s => normalizeDate(s.일자).startsWith(db.monthKey)).reduce((s, r) => s + Number(r.실결제금액 || 0) - Number(r.환불금액 || 0), 0);
       const monthExp = (db.EXPENSE || []).filter(e => normalizeDate(e.일자).startsWith(db.monthKey)).reduce((s, r) => s + Number(r.금액 || 0), 0);
@@ -2042,7 +2053,7 @@
 
       for (let d = 1; d <= lastDate; d++) {
         const iso = y + '-' + pad(m + 1) + '-' + pad(d);
-        const dayAppts = (db.APPT || []).filter(a => normalizeDate(a.예약일자 || a.예약일) === iso);
+        const dayAppts = (db.APPT || []).filter(a => getApptDate(a) === iso);
         const count = dayAppts.length;
         /* 이슈 고객 포함 여부 체크 */
         const hasIssue = dayAppts.some(a => {
@@ -2060,7 +2071,7 @@
       }
       document.getElementById('calendar').innerHTML = html;
 
-      const rows = (db.APPT || []).filter(a => normalizeDate(a.예약일자 || a.예약일) === selectedDate).sort((a, b) => String(a.예약시간 || '').localeCompare(String(b.예약시간 || '')));
+      const rows = (db.APPT || []).filter(a => getApptDate(a) === selectedDate).sort((a, b) => String(a.예약시간 || '').localeCompare(String(b.예약시간 || '')));
       const totalCnt = rows.length;
       const issueCnt = rows.filter(a => { const c = getCustById(a.고객ID); return c && custHasIssue(c); }).length;
       const issueNote = issueCnt > 0 ? ` <span style="color:var(--danger);font-size:11px;font-weight:700;">⚠ 이슈 ${issueCnt}명</span>` : '';
@@ -2184,11 +2195,11 @@
           .filter(a => {
             const aId = String(a.고객ID || '').trim();
             if (!aId || aId !== custId) return false;
-            const d = normalizeDate(a.예약일자 || a.예약일);
+            const d = getApptDate(a);
             return !!d;
           })
           .sort((a, b) => {
-            const da = normalizeDate(a.예약일자 || a.예약일) || '';
+            const da = getApptDate(a) || '';
             const db2 = normalizeDate(b.예약일자 || b.예약일) || '';
             return db2.localeCompare(da); // 최신순
           })
@@ -2542,7 +2553,7 @@
       const box = document.getElementById('saleTargetInfo');
       if (!sel || !box) return;
 
-      const appts = (db.APPT || []).filter(a => normalizeDate(a.예약일자 || a.예약일) === date);
+      const appts = (db.APPT || []).filter(a => getApptDate(a) === date);
       const seen = new Set();
       const uniqueAppts = [];
       appts.forEach(a => { const id = String(a.고객ID || ''); if (id && !seen.has(id)) { seen.add(id); uniqueAppts.push(a); } });
@@ -2785,7 +2796,7 @@
         apptId, customerId: a.고객ID, service: a.시술항목,
         paid: document.getElementById('fCompleteAmt').value,
         payMethod: document.getElementById('fCompletePay').value,
-        date: normalizeDate(a.예약일자 || a.예약일) || db.today
+        date: getApptDate(a) || db.today
       };
       toast('완료 처리 중...');
       callServer('api_completeAppointment', p, () => { closeSheet(); toast('✓ 완료 처리되었습니다.'); refreshFromServer(); }, e => alert(err2str(e)));
@@ -2799,7 +2810,7 @@
         apptId, customerId: a.고객ID || '', service: a.시술항목 || '',
         paid: document.getElementById('fCompleteAmt').value,
         payMethod: document.getElementById('fCompletePay').value,
-        date: normalizeDate(a.예약일자 || a.예약일) || db.today
+        date: getApptDate(a) || db.today
       };
       toast('완료 처리 중...');
       callServer('api_completeAppointment', p, () => {
