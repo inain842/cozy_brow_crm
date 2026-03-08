@@ -1472,25 +1472,29 @@
     const GAS_API_URL = 'https://script.google.com/macros/s/AKfycby2xg1SGQjhn4NT1EgDNlcbKXsT8bzh4_G3zkM4uY3u7FXr-oUFXeE1DvgzDyV_9Uzjmw/exec';
 
     /* ──────────────── fetch 기반 callServer (Safari/PWA 302 리다이렉트 안전) ──────────────── */
+    /*
+     * [문제1 해결] 모바일 Safari / PWA에서 GAS POST 시 302 리다이렉트로 body가 소실되는 문제.
+     *
+     * 해결 전략:
+     *  - 읽기(getInitialData): GET 요청 → 기존 방식 유지
+     *  - 쓰기(create/add/complete 등): 모든 데이터를 URL 쿼리스트링(action+data)에 담아
+     *    GET으로 전송. GAS doGet()이 쓰기도 처리하도록 통일.
+     *    → POST body 소실 문제를 근본적으로 회피.
+     *  - fetch redirect:'follow' 우선, 실패 시 XHR fallback.
+     *
+     * ※ GAS doGet()에서 action+data 파라미터로 쓰기를 처리하도록 GAS 코드도 동일하게 유지.
+     */
     function callServer(actionName, payload, onOk, onFail) {
       const fail = onFail || function (e) { alert(err2str(e)); };
       const ok = onOk || function () { };
       const action = actionName.replace(/^api_/, '');
 
+      /* 모든 요청을 GET 쿼리스트링으로 전송 (POST body 소실 문제 완전 회피) */
       let url = GAS_API_URL + '?action=' + encodeURIComponent(action);
       if (payload) {
         url += '&data=' + encodeURIComponent(JSON.stringify(payload));
       }
 
-      /**
-       * 모바일 Safari / PWA(홈 화면 추가 앱)에서는
-       * GAS 배포 URL이 302 리다이렉트를 거치며 fetch가 body를 잃어버리거나
-       * opaque response를 반환하는 문제가 있음.
-       *
-       * 해결 전략:
-       * 1) fetch + redirect:'follow' + r.text() → JSON.parse  (우선 시도)
-       * 2) 실패 시 XMLHttpRequest fallback
-       */
       function parseJSON(text) {
         try { return JSON.parse(text); }
         catch (_) { return null; }
@@ -1502,11 +1506,17 @@
         ok(data);
       }
 
-      /* ── 방법 1: fetch (redirect:follow 명시, text 파싱) ── */
+      /* ── 방법 1: fetch (redirect:follow, cors 모드) ── */
       function tryFetch() {
-        return fetch(url, { method: 'GET', redirect: 'follow' })
+        return fetch(url, {
+          method: 'GET',
+          redirect: 'follow',
+          mode: 'cors',
+          cache: 'no-store'
+        })
           .then(function (r) {
-            if (!r.ok && r.type === 'opaque') throw new Error('opaque');
+            /* opaque 응답(no-cors fallback)은 text 읽기 불가 → XHR로 전환 */
+            if (r.type === 'opaque') throw new Error('opaque');
             return r.text();
           })
           .then(function (txt) {
@@ -1516,11 +1526,12 @@
           });
       }
 
-      /* ── 방법 2: XMLHttpRequest fallback (리다이렉트 자동 follow) ── */
+      /* ── 방법 2: XMLHttpRequest fallback (iOS Safari 구형 호환) ── */
       function tryXHR() {
         return new Promise(function (resolve, reject) {
           var xhr = new XMLHttpRequest();
           xhr.open('GET', url, true);
+          xhr.withCredentials = false;
           xhr.onload = function () {
             if (xhr.status >= 200 && xhr.status < 400) {
               var data = parseJSON(xhr.responseText);
@@ -1529,6 +1540,8 @@
             } else { reject(new Error('XHR status ' + xhr.status)); }
           };
           xhr.onerror = function () { reject(new Error('XHR network error')); };
+          xhr.ontimeout = function () { reject(new Error('XHR timeout')); };
+          xhr.timeout = 30000;
           xhr.send();
         });
       }
@@ -2172,7 +2185,7 @@
           <div class="form-block"><label class="label">연락처 *</label><input id="fCustPhone" class="field" type="tel" placeholder="010-0000-0000" value="${esc(prePhone)}"></div>
         </div>
         <div class="form-row">
-          <div class="form-block"><label class="label">방문일 / 예약일 *</label><input id="fCustReserve" class="field" type="date" value="${today}"></div>
+          <div class="form-block"><label class="label">방문일 / 예약일 *<span style="font-size:10px;color:var(--danger);font-weight:400;margin-left:6px;">과거 고객은 실제 방문일 입력</span></label><input id="fCustReserve" class="field" type="date" value=""></div>
           <div class="form-block"><label class="label">리터치 예정일</label><input id="fCustRetouch" class="field" type="date"></div>
         </div>
         <div class="form-block"><label class="label">시술 항목</label><select id="fCustService" class="select">${getServiceSelectHtml(true)}</select></div>
@@ -2434,6 +2447,7 @@
         apptId: apptIdEl ? apptIdEl.value : ''
       };
       if (!p.name || !p.phone) { alert('성명과 연락처는 필수입니다.'); return; }
+      if (!p.visitDate) { alert('방문일 / 예약일을 반드시 입력해주세요.\n(과거 고객은 실제 방문일을 선택하세요.)'); return; }
       toast('고객 카드 저장 중...');
       const apiName = p.apptId ? 'api_registerCustomerAfterTreatment' : 'api_createCustomer';
       callServer(apiName, p, () => { closeSheet(); boot(); toast('✓ 고객 카드 등록 완료'); }, e => alert(err2str(e)));
