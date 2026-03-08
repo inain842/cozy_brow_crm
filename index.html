@@ -207,6 +207,14 @@
       display: flex;
       gap: 8px;
       align-items: center;
+      flex-shrink: 0;
+      flex-wrap: nowrap;
+    }
+
+    .hdr-btn-icon {
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
     .hdr-btn {
@@ -1149,12 +1157,12 @@
   <header class="top-bar">
     <div class="top-inner">
       <div>
-        <div class="brand">COZY BROW <em>CRM</em></div>
+        <div class="brand">COZY <em>BROW</em></div>
         <div class="brand-sub" id="headerDate">-</div>
       </div>
       <div class="top-actions">
-        <button class="hdr-btn hdr-btn-primary" onclick="openSheet('quick')">＋ 빠른 입력</button>
-        <button class="hdr-btn hdr-btn-icon" onclick="boot()" title="새로고침">↻</button>
+        <button class="hdr-btn hdr-btn-primary" onclick="openSheet('quick')" style="white-space:nowrap;flex-shrink:0;">＋ 빠른입력</button>
+        <button class="hdr-btn hdr-btn-icon" onclick="boot()" title="새로고침" style="flex-shrink:0;">↻</button>
       </div>
     </div>
   </header>
@@ -1264,7 +1272,10 @@
 
       <div class="card">
         <div class="card-head">
-          <div class="card-title" id="selectedDateLabel">선택일 예약 현황</div>
+          <div>
+            <div class="card-title">예약 현황</div>
+            <div class="card-sub" id="selectedDateLabel" style="margin-top:3px;font-size:13px;font-weight:700;color:var(--text);">날짜를 선택하세요</div>
+          </div>
           <button class="btn btn-ghost btn-xs" onclick="openSheet('appt')">예약 추가</button>
         </div>
         <div id="dayApptList" class="list"></div>
@@ -1310,11 +1321,33 @@
       <div class="sec-head">
         <div>
           <div class="sec-title">매출</div>
-          <div class="sec-sub">이번 달 매출 현황</div>
+          <div class="sec-sub">캘린더 기반 매출 이력 확인</div>
         </div>
-        <button class="btn btn-primary btn-sm" onclick="openSheet('sale')">＋ 매출 입력</button>
+        <button class="btn btn-primary btn-sm" onclick="openSheet('sale')" style="white-space:nowrap;flex-shrink:0;">＋ 매출입력</button>
       </div>
 
+      <!-- 매출 월력 -->
+      <div class="card">
+        <div class="card-head">
+          <button class="btn btn-ghost btn-sm" onclick="changeSalesMonth(-1)">◀ 이전</button>
+          <div id="salesCalTitle" class="card-title">-</div>
+          <button class="btn btn-ghost btn-sm" onclick="changeSalesMonth(1)">다음 ▶</button>
+        </div>
+        <div class="cal-grid" id="salesCalendar"></div>
+      </div>
+
+      <!-- 선택일 매출 현황 -->
+      <div class="card" id="salesDayCard">
+        <div class="card-head">
+          <div class="card-title" id="salesDayLabel">날짜를 선택하세요</div>
+        </div>
+        <!-- 선택일 종합 매출 -->
+        <div id="salesDaySummary"></div>
+        <!-- 선택일 상세 매출 목록 -->
+        <div id="salesDayList" class="list" style="margin-top:10px;"></div>
+      </div>
+
+      <!-- 월 전체 KPI -->
       <div class="kpi-grid">
         <div class="kpi-card">
           <div class="kpi-label">이달 총 매출</div>
@@ -1379,7 +1412,7 @@
       <span class="nav-icon">🏠</span><span class="nav-label">홈</span>
     </button>
     <button class="nav-item" data-view="appt" onclick="go('appt')">
-      <span class="nav-icon">📅</span><span class="nav-label">예약</span>
+      <span class="nav-icon">📅</span><span class="nav-label">예약관리</span>
     </button>
     <button class="nav-item" data-view="cust" onclick="go('cust')">
       <span class="nav-icon">👤</span><span class="nav-label">고객카드</span>
@@ -1412,6 +1445,8 @@
     let currentView = 'home';
     let calCursor = new Date();
     let selectedDate = '';
+    let salesCalCursor = new Date();
+    let selectedSalesDate = '';
     let custFilter = 'all', custSort = 'name';
     let pastCustVisible = false;
 
@@ -1603,6 +1638,8 @@
           db = normalizeData(res);
           document.getElementById('headerDate').textContent = compactDisplay(db.today) + ' 기준';
           if (!selectedDate) selectedDate = db.today;
+          /* 매출 월력 초기화 */
+          if (db.today) { const td = new Date(db.today + 'T00:00:00'); salesCalCursor = new Date(td.getFullYear(), td.getMonth(), 1); }
           hideSplash();
           renderAll();
         } catch (e) { console.error(e); hideSplash(); alert('렌더링 오류: ' + err2str(e)); }
@@ -1630,14 +1667,30 @@
     /* ──────────────── Customer year tags ──────────────── */
     function getCustYears(id) {
       const yrs = new Set();
-      [...(db.SALES || []), ...(db.APPT || [])].forEach(r => {
-        if (String(r.고객ID || '') === String(id || '')) {
-          const dt = normalizeDate(r.일자 || r.예약일자 || r.예약일);
+      const sid = String(id || '').trim();
+      if (!sid) return yrs;
+      /* SALES 기록만으로 연도 판단.
+       * 고객카드의 방문일/예약일은 예약 등록 시 오늘 날짜(26년)로 덮어씌워지므로
+       * 연도 분류에 절대 사용하지 않음. */
+      (db.SALES || []).forEach(r => {
+        if (String(r.고객ID || '').trim() === sid) {
+          const dt = normalizeDate(r.일자);
           if (dt) yrs.add(dt.slice(2, 4));
         }
       });
-      const c = getCustById(id);
-      if (c) [c.방문일, c.예약일, c.리터치일].forEach(v => { const dt = normalizeDate(v); if (dt) yrs.add(dt.slice(2, 4)); });
+      /* SALES 기록이 전혀 없는 고객만 방문일 참조
+       * (단, 방문일이 6자리 compact 형식인 경우만 신뢰 — ISO 타임스탬프 오염 방지) */
+      if (yrs.size === 0) {
+        const c = getCustById(id);
+        if (c) {
+          const raw = String(c.방문일 || '').trim();
+          // compact 6자리(YYMMDD)나 정확히 yyyy-MM-dd 10자리만 신뢰
+          if (/^\d{6}$/.test(raw) || /^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+            const dt = normalizeDate(raw);
+            if (dt) yrs.add(dt.slice(2, 4));
+          }
+        }
+      }
       return yrs;
     }
 
@@ -2011,7 +2064,20 @@
       const totalCnt = rows.length;
       const issueCnt = rows.filter(a => { const c = getCustById(a.고객ID); return c && custHasIssue(c); }).length;
       const issueNote = issueCnt > 0 ? ` <span style="color:var(--danger);font-size:11px;font-weight:700;">⚠ 이슈 ${issueCnt}명</span>` : '';
-      document.getElementById('selectedDateLabel').innerHTML = compactDisplay(selectedDate) + ' 예약 현황' + (totalCnt ? ` <span style="color:var(--sub);font-size:12px;">${totalCnt}건</span>` : '') + issueNote;
+      /* yy-mm-dd(요일) 형식으로 날짜 표기 */
+      let selectedLabel = '날짜를 선택하세요';
+      if (selectedDate) {
+        const sd = new Date(selectedDate + 'T00:00:00');
+        const yy = String(sd.getFullYear()).slice(2);
+        const mm = pad(sd.getMonth() + 1);
+        const dd = pad(sd.getDate());
+        const wdStr = WD[sd.getDay()];
+        const cntStr = totalCnt ? ` · ${totalCnt}건` : ' · 예약 없음';
+        const issueStr = issueCnt > 0 ? ` ⚠ 이슈${issueCnt}명` : '';
+        selectedLabel = `${yy}-${mm}-${dd}(${wdStr})${cntStr}${issueStr}`;
+      }
+      const labelEl = document.getElementById('selectedDateLabel');
+      if (labelEl) labelEl.textContent = selectedLabel;
 
       document.getElementById('dayApptList').innerHTML = rows.length
         ? rows.map(a => {
@@ -2112,8 +2178,21 @@
         const yrs = getCustYears(c.고객ID);
         const yrTags = [...[...yrs].sort()].map(yy => `<span class="badge b-${yy}">${yy}년</span>`).join('');
         const statusBadge = custHasIssue(c) ? '<span class="badge b-issue">⚠ 이슈</span>' : '<span class="badge b-done">✓ 정상</span>';
-        /* 이번 연도 예약 이력 */
-        const custAppts = (db.APPT || []).filter(a => String(a.고객ID || '') === String(c.고객ID || '')).slice(0, 3);
+        /* 최근 예약 이력 - 고객ID가 있고 정확히 일치하는 예약만 최신순 3건 */
+        const custId = String(c.고객ID || '').trim();
+        const custAppts = custId ? (db.APPT || [])
+          .filter(a => {
+            const aId = String(a.고객ID || '').trim();
+            if (!aId || aId !== custId) return false;
+            const d = normalizeDate(a.예약일자 || a.예약일);
+            return !!d;
+          })
+          .sort((a, b) => {
+            const da = normalizeDate(a.예약일자 || a.예약일) || '';
+            const db2 = normalizeDate(b.예약일자 || b.예약일) || '';
+            return db2.localeCompare(da); // 최신순
+          })
+          .slice(0, 3) : [];
         const apptRows = custAppts.length
           ? custAppts.map(a => `<div class="visit-row"><span>${compactDisplay(a.예약일자 || a.예약일)}</span><span style="color:var(--sub)">${esc(a.시술항목 || '-')}</span><span class="badge ${String(a.상태 || '') === '완료' ? 'b-done' : 'b-open'}" style="font-size:9px;">${esc(a.상태 || '예약')}</span></div>`).join('')
           : '<div style="color:var(--sub);font-size:11px;padding:4px 0;">예약 이력 없음</div>';
@@ -2161,8 +2240,88 @@
     }
 
     /* ──────────────── Sales ──────────────── */
+    function changeSalesMonth(delta) { salesCalCursor.setMonth(salesCalCursor.getMonth() + delta); renderSales(); }
+    function selectSalesDate(iso) { selectedSalesDate = iso; renderSales(); }
+
+    function renderSalesCalendar() {
+      const y = salesCalCursor.getFullYear(), m = salesCalCursor.getMonth();
+      const titleEl = document.getElementById('salesCalTitle');
+      if (titleEl) titleEl.textContent = `${y}년 ${m + 1}월`;
+
+      const firstDay = new Date(y, m, 1).getDay(), lastDate = new Date(y, m + 1, 0).getDate();
+      let html = WD.map(d => `<div class="cal-day-label">${d}</div>`).join('');
+      for (let i = 0; i < firstDay; i++) html += '<div class="cal-cell empty"></div>';
+
+      for (let d = 1; d <= lastDate; d++) {
+        const iso = y + '-' + pad(m + 1) + '-' + pad(d);
+        const daySales = (db.SALES || []).filter(s => normalizeDate(s.일자) === iso);
+        const count = daySales.length;
+        const dayTotal = daySales.reduce((s, r) => s + Number(r.실결제금액 || 0) - Number(r.환불금액 || 0), 0);
+        let cls = 'cal-cell';
+        if (count > 0) cls += ' has-appt';
+        if (iso === selectedSalesDate) cls += ' selected';
+        if (iso === db.today) cls += ' today';
+        const dots = count > 0 ? new Array(Math.min(count, 3)).fill('<span class="dot"></span>').join('') : '';
+        const amtLabel = count > 0 ? `<span style="font-size:8px;font-weight:700;color:inherit;opacity:.8;">${dayTotal >= 10000 ? (dayTotal/10000).toFixed(0)+'만' : ''}</span>` : '';
+        html += `<button class="${cls}" onclick="selectSalesDate('${iso}')"><div>${d}</div><div class="dots">${dots}</div>${amtLabel}</button>`;
+      }
+      const calEl = document.getElementById('salesCalendar');
+      if (calEl) calEl.innerHTML = html;
+    }
+
+    function renderSalesDayPanel() {
+      const labelEl = document.getElementById('salesDayLabel');
+      const summaryEl = document.getElementById('salesDaySummary');
+      const listEl = document.getElementById('salesDayList');
+      if (!labelEl || !summaryEl || !listEl) return;
+
+      if (!selectedSalesDate) {
+        labelEl.textContent = '날짜를 선택하세요';
+        summaryEl.innerHTML = '';
+        listEl.innerHTML = '<div class="empty-state"><div class="empty-icon">📅</div>캘린더에서 날짜를 선택하면<br>해당일 매출을 확인할 수 있습니다.</div>';
+        return;
+      }
+
+      const sd = new Date(selectedSalesDate + 'T00:00:00');
+      const yy = String(sd.getFullYear()).slice(2);
+      const mm = pad(sd.getMonth() + 1);
+      const dd = pad(sd.getDate());
+      const wdStr = WD[sd.getDay()];
+      labelEl.textContent = `${yy}-${mm}-${dd}(${wdStr}) 매출 현황`;
+
+      const rows = (db.SALES || []).filter(s => normalizeDate(s.일자) === selectedSalesDate);
+      const dayTotal = rows.reduce((s, r) => s + Number(r.실결제금액 || 0) - Number(r.환불금액 || 0), 0);
+      const payGroups = rows.reduce((acc, r) => { const k = String(r.결제수단 || '기타'); acc[k] = (acc[k] || 0) + Number(r.실결제금액 || 0) - Number(r.환불금액 || 0); return acc; }, {});
+      const payColors = { '카드': '#b8892a', '계좌이체': '#4a90e2', '현금': '#2cb67d' };
+
+      summaryEl.innerHTML = rows.length ? `
+        <div style="background:var(--gold-soft);border:1px solid var(--gold-border);border-radius:var(--radius);padding:14px 16px;margin-bottom:8px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+            <span style="font-size:12px;color:var(--sub);font-weight:700;">종합 매출</span>
+            <span style="font-size:20px;font-weight:700;color:var(--gold);">${money(dayTotal)}</span>
+          </div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;">
+            ${Object.entries(payGroups).map(([k, v]) => `<span style="background:white;border:1px solid var(--line);border-radius:8px;padding:4px 10px;font-size:11px;font-weight:700;color:${payColors[k]||'var(--sub)'};">${k} ${money(v)}</span>`).join('')}
+            <span style="background:white;border:1px solid var(--line);border-radius:8px;padding:4px 10px;font-size:11px;color:var(--sub);">${rows.length}건</span>
+          </div>
+        </div>` : '';
+
+      listEl.innerHTML = rows.length
+        ? rows.map(s => {
+          const net = Number(s.실결제금액 || 0) - Number(s.환불금액 || 0);
+          return `<div class="item"><div class="item-inner"><div class="item-title">${esc(s.시술항목 || '-')}</div><div class="item-sub">${esc(getCustName(s.고객ID))} · ${esc(s.결제수단 || '-')}</div></div><div class="item-right"><div class="item-amt">${money(net)}</div></div></div>`;
+        }).join('')
+        : '<div class="empty-state"><div class="empty-icon">💴</div>해당일 매출 기록이 없습니다.</div>';
+    }
+
     function renderSales() {
-      const rows = (db.SALES || []).filter(s => normalizeDate(s.일자).startsWith(db.monthKey));
+      /* 매출 월력 */
+      renderSalesCalendar();
+      renderSalesDayPanel();
+
+      /* 월 전체 KPI */
+      const salesMonthKey = salesCalCursor.getFullYear() + '-' + pad(salesCalCursor.getMonth() + 1);
+      const rows = (db.SALES || []).filter(s => normalizeDate(s.일자).startsWith(salesMonthKey));
       const total = rows.reduce((s, r) => s + Number(r.실결제금액 || 0) - Number(r.환불금액 || 0), 0);
       const avg = rows.length ? Math.round(total / rows.length) : 0;
       document.getElementById('salesTotal').textContent = money(total);
@@ -2416,7 +2575,9 @@
       if (!c) return;
       const sales = (db.SALES || []).filter(s => String(s.고객ID || '') === String(id || ''));
       const visitCount = sales.length;
-      const lastVisit = sales.reduce((max, r) => { const d = normalizeDate(r.일자); return (d && (!max || d > max)) ? d : max; }, normalizeDate(c.방문일 || c.예약일 || ''));
+      /* 최근 방문: sales 기록이 있으면 최근 sales 일자, 없으면 고객카드 방문일만 참조 */
+      const lastSalesDate = sales.reduce((max, r) => { const d = normalizeDate(r.일자); return (d && (!max || d > max)) ? d : max; }, '');
+      const lastVisit = lastSalesDate || normalizeDate(c.방문일 || c.예약일 || '');
       const total = sales.reduce((s, r) => s + Number(r.실결제금액 || 0) - Number(r.환불금액 || 0), 0);
       const yrs = [...getCustYears(id)].sort();
       const yrTags = yrs.map(yy => `<span class="badge b-${yy}">${yy}년</span>`).join(' ');
