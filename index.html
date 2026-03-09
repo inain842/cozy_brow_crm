@@ -845,10 +845,18 @@
       max-width: 900px;
       background: var(--surface);
       border-radius: var(--radius-xl) var(--radius-xl) 0 0;
-      padding: 6px 18px calc(18px + var(--safe-bottom));
-      max-height: 93vh;
+      padding: 6px 18px 0;
+      max-height: 93dvh;
       overflow-y: auto;
+      display: flex;
+      flex-direction: column;
       animation: sheetUp .24s cubic-bezier(.34, 1.56, .64, 1);
+    }
+    /* [BUG3 FIX] 시트 본문이 footer에 가려지지 않도록 스크롤 가능 영역 확보 */
+    #sheetBody {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0 0 calc(8px + var(--safe-bottom));
     }
 
     @keyframes sheetUp {
@@ -889,8 +897,12 @@
       display: flex;
       gap: 8px;
       margin-top: 18px;
-      padding-top: 14px;
+      padding: 14px 0 calc(18px + var(--safe-bottom));
       border-top: 1px solid var(--line);
+      position: sticky;
+      bottom: 0;
+      background: var(--surface);
+      z-index: 2;
     }
 
     .sheet-footer>.btn {
@@ -1673,7 +1685,8 @@
     function getApptName(a) { return a.성함 || getCustName(a.고객ID); }
 
     function getServiceRows() { return (db.CATALOG || []).filter(r => String(r.시술항목 || '').trim()); }
-    function getServicePrice(r) { return Number(r.금액 || r.단가 || r.판매가 || r.예상금액 || r.기준금액 || 0) || 0; }
+    /* [BUG2 FIX] CB_카탈로그의 실제 헤더는 '기본금액' — 누락 추가 */
+    function getServicePrice(r) { return Number(r.기본금액 || r.금액 || r.단가 || r.판매가 || r.예상금액 || r.기준금액 || 0) || 0; }
 
     /* ──────────────── Customer year tags ──────────────── */
     function getCustYears(id) {
@@ -2115,7 +2128,13 @@
     }
 
     function selectDate(iso) { selectedDate = iso; renderAppt(); }
-    function changeMonth(delta) { calCursor.setMonth(calCursor.getMonth() + delta); renderAppt(); }
+    /* [BUG1 FIX] setMonth()는 31일 → 다음달 이동 시 날짜가 밀리는 문제 발생.
+     * 항상 해당 월의 1일로 새 Date 객체를 생성해 안전하게 이동. */
+    function changeMonth(delta) {
+      const y = calCursor.getFullYear(), m = calCursor.getMonth();
+      calCursor = new Date(y, m + delta, 1);
+      renderAppt();
+    }
 
     /* ──────────────── Customers ──────────────── */
     function custConsent(c) { return String(c.동의서동의 || c.동의여부 || c.동의서 || '').toUpperCase() === 'Y'; }
