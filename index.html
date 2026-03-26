@@ -558,9 +558,13 @@
       font-size: 14px;
       font-weight: 700;
       color: var(--text);
-      white-space: nowrap;
+      /* [UI FIX] 긴 제목도 잘리지 않도록 2줄까지 허용 */
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
       overflow: hidden;
-      text-overflow: ellipsis;
+      word-break: break-all;
+      line-height: 1.4;
     }
 
     .item-sub {
@@ -568,6 +572,12 @@
       color: var(--sub);
       font-size: 11px;
       line-height: 1.5;
+      /* [UI FIX] 서브 텍스트도 짤림 방지 */
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      word-break: break-all;
     }
 
     .item-right {
@@ -1301,7 +1311,10 @@
           <div class="sec-title">예약 관리</div>
           <div class="sec-sub">캘린더 기반 예약 이력 확인</div>
         </div>
-        <button class="btn btn-primary btn-sm" onclick="openSheet('appt')">＋ 예약 등록</button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn btn-ghost btn-sm" onclick="syncNaver()">✦ 네이버 동기화</button>
+          <button class="btn btn-primary btn-sm" onclick="openSheet('appt')">＋ 예약 등록</button>
+        </div>
       </div>
 
       <div class="card">
@@ -1423,6 +1436,25 @@
         </div>
         <button class="btn btn-primary btn-sm" onclick="openSheet('exp')">＋ 지출 입력</button>
       </div>
+      
+      <!-- 지출 월력 -->
+      <div class="card">
+        <div class="card-head">
+          <button class="btn btn-ghost btn-sm" onclick="changeExpMonth(-1)">◀ 이전</button>
+          <div id="expCalTitle" class="card-title">-</div>
+          <button class="btn btn-ghost btn-sm" onclick="changeExpMonth(1)">다음 ▶</button>
+        </div>
+        <div class="cal-grid" id="expCalendar"></div>
+      </div>
+
+      <!-- 선택일 지출 현황 -->
+      <div class="card" id="expDayCard">
+        <div class="card-head">
+          <div class="card-title" id="expDayLabel">날짜를 선택하세요</div>
+        </div>
+        <!-- 선택일 지출 내역 -->
+        <div id="expDayList" class="list"></div>
+      </div>
 
       <div class="kpi-grid">
         <div class="kpi-card">
@@ -1501,6 +1533,8 @@
     let selectedDate = '';
     let salesCalCursor = new Date();
     let selectedSalesDate = '';
+    let expCalCursor = new Date();
+    let selectedExpDate = '';
     let custFilter = 'all', custSort = 'name';
     let pastCustVisible = false;
 
@@ -1706,12 +1740,35 @@
           db = normalizeData(res);
           document.getElementById('headerDate').textContent = compactDisplay(db.today) + ' 기준';
           if (!selectedDate) selectedDate = db.today;
-          /* 매출 월력 초기화 */
-          if (db.today) { const td = new Date(db.today + 'T00:00:00'); salesCalCursor = new Date(td.getFullYear(), td.getMonth(), 1); }
+          /* 매출/지출 월력 초기화 */
+          if (db.today) {
+            const td = new Date(db.today + 'T00:00:00');
+            salesCalCursor = new Date(td.getFullYear(), td.getMonth(), 1);
+            expCalCursor = new Date(td.getFullYear(), td.getMonth(), 1);
+          }
           hideSplash();
           renderAll();
         } catch (e) { console.error(e); hideSplash(); alert('렌더링 오류: ' + err2str(e)); }
       }, function (e) { clearTimeout(window.__bootTimer); hideSplash(); alert('로딩 실패: ' + err2str(e)); });
+    }
+
+    /* ──────────────── Naver Sync ──────────────── */
+    function syncNaver() {
+      _withSave(function(done) {
+        toast('네이버 예약 동기화 중...');
+        callServer('api_syncFromCalendar', {}, function(res) {
+          done();
+          if (res.syncCount > 0) {
+            toast(`✓ ${res.syncCount}건의 새로운 예약이 동기화되었습니다.`);
+            refreshFromServer();
+          } else {
+            toast('동기화할 새로운 네이버 예약이 없습니다.');
+          }
+        }, function(e) {
+          done();
+          alert('동기화 실패: ' + err2str(e));
+        });
+      });
     }
 
     function renderAll() { renderDash(); renderAppt(); renderCust(); renderSales(); renderExp(); go(currentView); }
@@ -2429,9 +2486,81 @@
     }
 
     /* ──────────────── Expenses ──────────────── */
+    function changeExpMonth(delta) {
+      expCalCursor = new Date(expCalCursor.getFullYear(), expCalCursor.getMonth() + delta, 1);
+      renderExp();
+    }
+    function selectExpDate(iso) { selectedExpDate = iso; renderExp(); }
+
+    function renderExpCalendar() {
+      const y = expCalCursor.getFullYear(), m = expCalCursor.getMonth();
+      const titleEl = document.getElementById('expCalTitle');
+      if (titleEl) titleEl.textContent = `${y}년 ${m + 1}월`;
+
+      const firstDay = new Date(y, m, 1).getDay(), lastDate = new Date(y, m + 1, 0).getDate();
+      let html = WD.map(d => `<div class="cal-day-label">${d}</div>`).join('');
+      for (let i = 0; i < firstDay; i++) html += '<div class="cal-cell empty"></div>';
+
+      for (let d = 1; d <= lastDate; d++) {
+        const iso = y + '-' + pad(m + 1) + '-' + pad(d);
+        const dayExp = (db.EXPENSE || []).filter(e => normalizeDate(e.일자) === iso);
+        const count = dayExp.length;
+        const dayTotal = dayExp.reduce((s, r) => s + Number(r.금액 || 0), 0);
+        let cls = 'cal-cell';
+        if (count > 0) cls += ' has-appt';
+        if (iso === selectedExpDate) cls += ' selected';
+        if (iso === db.today) cls += ' today';
+        const dots = count > 0 ? new Array(Math.min(count, 3)).fill('<span class="dot"></span>').join('') : '';
+        const amtLabel = count > 0 ? `<span style="font-size:8px;font-weight:700;color:#e87040;opacity:.8;">${dayTotal >= 10000 ? (dayTotal/10000).toFixed(0)+'만' : (dayTotal/1000).toFixed(0)+'천'}</span>` : '';
+        html += `<button class="${cls}" onclick="selectExpDate('${iso}')"><div>${d}</div><div class="dots">${dots}</div>${amtLabel}</button>`;
+      }
+      const calEl = document.getElementById('expCalendar');
+      if (calEl) calEl.innerHTML = html;
+    }
+
+    function renderExpDayPanel() {
+      const labelEl = document.getElementById('expDayLabel');
+      const listEl = document.getElementById('expDayList');
+      if (!labelEl || !listEl) return;
+
+      if (!selectedExpDate) {
+        labelEl.textContent = '날짜를 선택하세요';
+        listEl.innerHTML = '<div class="empty-state"><div class="empty-icon">📅</div>캘린더에서 날짜를 선택하면<br>해당일 지출을 확인할 수 있습니다.</div>';
+        return;
+      }
+
+      const sd = new Date(selectedExpDate + 'T00:00:00');
+      const yy = String(sd.getFullYear()).slice(2);
+      const mm = pad(sd.getMonth() + 1);
+      const dd = pad(sd.getDate());
+      const wdStr = WD[sd.getDay()];
+      labelEl.textContent = `${yy}-${mm}-${dd}(${wdStr}) 지출 현황`;
+
+      const rows = (db.EXPENSE || []).filter(e => normalizeDate(e.일자) === selectedExpDate);
+      listEl.innerHTML = rows.length
+        ? rows.map(e => `
+          <div class="item" onclick="openExpenseDetail('${esc(e.지출ID || '')}')">
+            <div class="item-inner">
+              <div class="item-title">${esc(e.계정과목 || e.항목 || '-')}</div>
+              <div class="item-sub">${esc(e.구분 || '-')} · ${esc(e.거래처 || '-')} · ${esc(e.결제수단 || '-')}</div>
+              ${e.메모 ? `<div style="font-size:10px;color:var(--sub);margin-top:2px;">memo: ${esc(e.메모)}</div>` : ''}
+            </div>
+            <div class="item-right">
+              <div class="item-amt" style="color:#e87040;">${money(e.금액)}</div>
+            </div>
+          </div>`).join('')
+        : '<div class="empty-state"><div class="empty-icon">💸</div>해당일 지출 기록이 없습니다.</div>';
+    }
+
     function renderExp() {
-      const rows = (db.EXPENSE || []).filter(e => normalizeDate(e.일자).startsWith(db.monthKey));
-      document.getElementById('expTotal').textContent = money(rows.reduce((s, r) => s + Number(r.금액 || 0), 0));
+      renderExpCalendar();
+      renderExpDayPanel();
+
+      const expMonthKey = expCalCursor.getFullYear() + '-' + pad(expCalCursor.getMonth() + 1);
+      const rows = (db.EXPENSE || []).filter(e => normalizeDate(e.일자).startsWith(expMonthKey));
+      const monthTotal = rows.reduce((s, r) => s + Number(r.금액 || 0), 0);
+
+      document.getElementById('expTotal').textContent = money(monthTotal);
       document.getElementById('expCount').textContent = rows.length + '건';
 
       const grouped = rows.reduce((acc, r) => { const k = String(r.계정과목 || r.항목 || '기타'); acc[k] = (acc[k] || 0) + Number(r.금액 || 0); return acc; }, {});
@@ -2446,7 +2575,7 @@
 
       document.getElementById('expList').innerHTML = rows.length
         ? rows.map(e => `<div class="item" onclick="openExpenseDetail('${esc(e.지출ID || '')}')"><div class="item-inner"><div class="item-title">${esc(e.계정과목 || e.항목 || '-')}</div><div class="item-sub">${compactDisplay(e.일자)} · ${esc(e.거래처 || '-')} · ${esc(e.구분 || '-')}</div></div><div class="item-right"><div class="item-amt">${money(e.금액)}</div></div></div>`).join('')
-        : '<div class="empty-state"><div class="empty-icon">📋</div>이번 달 지출 기록이 없습니다.</div>';
+        : `<div class="empty-state"><div class="empty-icon">📋</div>${expCalCursor.getFullYear()}년 ${expCalCursor.getMonth()+1}월 지출 기록이 없습니다.</div>`;
     }
 
     /* ──────────────── Sheets (입력창) ──────────────── */
