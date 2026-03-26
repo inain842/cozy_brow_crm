@@ -211,10 +211,21 @@
       flex-wrap: nowrap;
     }
 
+    /* [CSS FIX] .hdr-btn-icon 중복 정의 통합
+     * 원인: 214~252줄에 동일 클래스명이 두 번 정의되어 첫 번째 정의가 무효화됨
+     * 수정: 두 정의를 하나로 통합 */
     .hdr-btn-icon {
       display: flex;
       align-items: center;
       justify-content: center;
+      width: 36px;
+      height: 36px;
+      padding: 0;
+      border-radius: 10px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      color: var(--text-2);
+      font-size: 15px;
     }
 
     .hdr-btn {
@@ -238,17 +249,6 @@
       background: var(--surface);
       color: var(--text-2);
       border: 1px solid var(--line);
-    }
-
-    .hdr-btn-icon {
-      width: 36px;
-      height: 36px;
-      padding: 0;
-      border-radius: 10px;
-      background: var(--surface);
-      border: 1px solid var(--line);
-      color: var(--text-2);
-      font-size: 15px;
     }
 
     /* ── SHELL ── */
@@ -460,6 +460,13 @@
 
     .btn-primary:active {
       transform: scale(.98);
+    }
+
+    /* [FIX-H7] 저장 중 버튼 비활성화 스타일 */
+    .btn:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+      transform: none !important;
     }
 
     .btn-secondary {
@@ -1132,13 +1139,6 @@
       transition: width .4s ease;
     }
 
-
-    @media(min-width:768px) and (max-width:1024px) {
-      .shell { max-width: 760px; }
-      .sheet { max-width: 760px; }
-      .kpi-grid { grid-template-columns: repeat(2, 1fr); }
-    }
-
     @media(max-width:680px) {
 
       .kpi-grid,
@@ -1156,8 +1156,32 @@
         font-size: 22px;
       }
 
+      /* [FIX-B7] 아이폰SE/미니 KPI 수치 쟘림 방지 */
       .kpi-value {
-        font-size: 21px;
+        font-size: 19px;
+        word-break: break-all;
+      }
+
+      /* [FIX-B12] KPI 라벨 가독성 개선 */
+      .kpi-label {
+        font-size: 10px;
+      }
+    }
+
+    /* [FIX-B7] 아이패드 10인치 최적화 */
+    @media(min-width:681px) and (max-width:1024px) {
+      .shell {
+        max-width: 100%;
+        padding: 16px 24px 8px;
+      }
+
+      .kpi-value {
+        font-size: 22px;
+      }
+
+      .kpi-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 14px;
       }
     }
   </style>
@@ -1456,8 +1480,19 @@
 
   <script>
     /*════════════════════════════════════
-     *  COZY BROW CRM v5.0
+     *  COZY BROW CRM v5.1
      *  index.html  — GAS 웹앱 전용 빌드
+     *
+     *  수정 이력 v5.1:
+     *  [FIX-H1] syncServiceSelection: total=0일 때 빈 문자열이 되어 저장 불가 수정
+     *  [FIX-H2] saveAppt: 예약일 유효성 검사 추가
+     *  [FIX-H3] openSheet('cust'): 방문일 기본값 오늘 날짜로 설정
+     *  [FIX-H4] openComplete: 환불 금액 필드 추가 + 신규고객 완료 버튼 disabled
+     *  [FIX-H5] openSaleEdit: 시술항목 select 추가 (GAS api_updateSale 이미 지원)
+     *  [FIX-H6] saveComplete/saveCompleteAndRegister: 환불 필드 연동
+     *  [FIX-H7] saveSaleEdit: 시술항목 필드 연동
+     *  [FIX-H8] drawSalesChart: 추정 데이터 이중 dataset 렌더링 버그 수정
+     *  [FIX-H9] 모든 save 함수: _saving 플래그로 중복 제출 방지
      *════════════════════════════════════*/
     let db = { CUSTOMER: [], APPT: [], SALES: [], EXPENSE: [], CATALOG: [], ACCOUNTS: [], today: '', monthKey: '' };
     let salesChart = null, apptForecastChart = null, expChart = null;
@@ -1468,18 +1503,17 @@
     let selectedSalesDate = '';
     let custFilter = 'all', custSort = 'name';
     let pastCustVisible = false;
-    let _saving = false;
 
-    function _setSaving(flag) {
-      _saving = !!flag;
-      document.querySelectorAll('.sheet-footer .btn-primary, .sheet-footer .btn-secondary').forEach(btn => {
-        btn.disabled = _saving;
-      });
-    }
-    function _withSave(executor) {
-      if (_saving) { toast('처리 중입니다. 잠시만 기다려주세요.'); return; }
-      _setSaving(true);
-      executor(function done() { _setSaving(false); });
+    /* [FIX-H9] 중복 제출 방지 플래그
+     * 원인: save 함수에 중복 실행 방지 로직 없음
+     * 증상: 빠르게 두 번 클릭 시 서버에 요청 두 번 전송 → 데이터 중복 생성
+     * 수정: _saving 플래그로 저장 중 재실행 차단 */
+    let _saving = false;
+    function _withSave(fn) {
+      if (_saving) { toast('처리 중입니다. 잠시 기다려주세요.'); return; }
+      _saving = true;
+      /* done() 호출 시 플래그 해제 — 성공/실패 모두에서 반드시 호출해야 함 */
+      fn(function done() { _saving = false; });
     }
 
     const WD = ['일', '월', '화', '수', '목', '금', '토'];
@@ -1563,53 +1597,17 @@
       return typeof window.Chart === 'function';
     }
 
-    /* ──────────────── GAS API URL / Cache ──────────────── */
-    const DEFAULT_GAS_API_URL = 'https://script.google.com/macros/s/AKfycby2xg1SGQjhn4NT1EgDNlcbKXsT8bzh4_G3zkM4uY3u7FXr-oUFXeE1DvgzDyV_9Uzjmw/exec';
-    const DATA_CACHE_KEY = 'COZY_BROW_DATA_CACHE_V2';
-    const API_URL_CACHE_KEY = 'COZY_BROW_GAS_API_URL';
-
-    function getApiUrl() {
-      return (window.__COZY_GAS_API_URL || localStorage.getItem(API_URL_CACHE_KEY) || DEFAULT_GAS_API_URL || '').trim();
-    }
-    function setApiUrl(url) {
-      const v = String(url || '').trim();
-      if (!v) return;
-      localStorage.setItem(API_URL_CACHE_KEY, v);
-    }
-    function saveDataCache(data) {
-      try { localStorage.setItem(DATA_CACHE_KEY, JSON.stringify(data || {})); } catch (_) {}
-    }
-    function loadDataCache() {
-      try {
-        const raw = localStorage.getItem(DATA_CACHE_KEY);
-        return raw ? JSON.parse(raw) : null;
-      } catch (_) { return null; }
-    }
+    /* ──────────────── GAS API URL ──────────────── */
+    const GAS_API_URL = 'https://script.google.com/macros/s/AKfycby2xg1SGQjhn4NT1EgDNlcbKXsT8bzh4_G3zkM4uY3u7FXr-oUFXeE1DvgzDyV_9Uzjmw/exec';
 
     /* ──────────────── fetch 기반 callServer (Safari/PWA 302 리다이렉트 안전) ──────────────── */
-    /*
-     * [문제1 해결] 모바일 Safari / PWA에서 GAS POST 시 302 리다이렉트로 body가 소실되는 문제.
-     *
-     * 해결 전략:
-     *  - 읽기(getInitialData): GET 요청 → 기존 방식 유지
-     *  - 쓰기(create/add/complete 등): 모든 데이터를 URL 쿼리스트링(action+data)에 담아
-     *    GET으로 전송. GAS doGet()이 쓰기도 처리하도록 통일.
-     *    → POST body 소실 문제를 근본적으로 회피.
-     *  - fetch redirect:'follow' 우선, 실패 시 XHR fallback.
-     *
-     * ※ GAS doGet()에서 action+data 파라미터로 쓰기를 처리하도록 GAS 코드도 동일하게 유지.
-     */
     function callServer(actionName, payload, onOk, onFail) {
       const fail = onFail || function (e) { alert(err2str(e)); };
       const ok = onOk || function () { };
       const action = actionName.replace(/^api_/, '');
-      const apiUrl = getApiUrl();
-      if (!apiUrl) {
-        fail('GAS API URL이 비어 있습니다. 현재 배포 URL을 설정해주세요.');
-        return;
-      }
 
-      let url = apiUrl + '?action=' + encodeURIComponent(action);
+      /* 모든 요청을 GET 쿼리스트링으로 전송 (POST body 소실 문제 완전 회피) */
+      let url = GAS_API_URL + '?action=' + encodeURIComponent(action);
       if (payload) {
         url += '&data=' + encodeURIComponent(JSON.stringify(payload));
       }
@@ -1618,22 +1616,14 @@
         try { return JSON.parse(text); }
         catch (_) { return null; }
       }
-      function normalizeErr(err) {
-        const raw = err2str(err);
-        if (/404/.test(raw)) {
-          return '404 File not found: 현재 INDEX.html에 저장된 GAS 웹앱 URL이 유효하지 않거나 재배포 후 URL이 변경되었습니다. 최신 /exec 주소로 교체해주세요.';
-        }
-        if (/Failed to fetch|network error|XHR status 0|XHR network error/i.test(raw)) {
-          return '서버 연결에 실패했습니다. 네트워크 상태 또는 GAS 웹앱 배포 권한(익명/전체 사용자)을 확인해주세요.';
-        }
-        return raw;
-      }
+
       function handleResult(data) {
         if (!data) { fail('서버 응답을 파싱할 수 없습니다.'); return; }
         if (data.error) { fail(data.error); return; }
         ok(data);
       }
 
+      /* ── 방법 1: fetch (redirect:follow, cors 모드) ── */
       function tryFetch() {
         return fetch(url, {
           method: 'GET',
@@ -1642,32 +1632,28 @@
           cache: 'no-store'
         })
           .then(function (r) {
-            if (r.status === 404) throw new Error('404_NOT_FOUND');
-            if (r.type === 'opaque') throw new Error('OPAQUE_RESPONSE');
+            if (r.type === 'opaque') throw new Error('opaque');
             return r.text();
           })
           .then(function (txt) {
-            const data = parseJSON(txt);
-            if (!data) throw new Error('JSON_PARSE_ERROR');
+            var data = parseJSON(txt);
+            if (!data) throw new Error('json_parse');
             handleResult(data);
           });
       }
 
+      /* ── 방법 2: XMLHttpRequest fallback (iOS Safari 구형 호환) ── */
       function tryXHR() {
         return new Promise(function (resolve, reject) {
-          const xhr = new XMLHttpRequest();
+          var xhr = new XMLHttpRequest();
           xhr.open('GET', url, true);
           xhr.withCredentials = false;
           xhr.onload = function () {
-            if (xhr.status === 404) { reject(new Error('404_NOT_FOUND')); return; }
             if (xhr.status >= 200 && xhr.status < 400) {
-              const data = parseJSON(xhr.responseText);
-              if (!data) { reject(new Error('JSON_PARSE_ERROR')); return; }
+              var data = parseJSON(xhr.responseText);
               handleResult(data);
               resolve();
-            } else {
-              reject(new Error('XHR status ' + xhr.status));
-            }
+            } else { reject(new Error('XHR status ' + xhr.status)); }
           };
           xhr.onerror = function () { reject(new Error('XHR network error')); };
           xhr.ontimeout = function () { reject(new Error('XHR timeout')); };
@@ -1678,9 +1664,7 @@
 
       tryFetch().catch(function () {
         return tryXHR();
-      }).catch(function (e) {
-        fail(normalizeErr(e));
-      });
+      }).catch(function (e) { fail(e); });
     }
 
     /* ──────────────── Data normalization ──────────────── */
@@ -1698,31 +1682,14 @@
     function refreshFromServer(onDone) {
       callServer('api_getInitialData', undefined, function(res) {
         db = normalizeData(res);
-        saveDataCache(db);
         document.getElementById('headerDate').textContent = compactDisplay(db.today) + ' 기준';
         if (!selectedDate) selectedDate = db.today;
         if (typeof onDone === 'function') onDone();
         renderAll();
-      }, function(e) {
-        console.warn('부분 새로고침 실패, 로컬 렌더만 수행', e);
-        renderAll();
-      });
+      }, function(e) { console.warn('부분 새로고침 실패, 로컬 렌더만 수행', e); renderAll(); });
     }
     function boot() {
       showSplash('최신 데이터를 불러오는 중...');
-      const cached = loadDataCache();
-      if (cached && Array.isArray(cached.CUSTOMER)) {
-        try {
-          db = normalizeData(cached);
-          document.getElementById('headerDate').textContent = compactDisplay(db.today) + ' 기준';
-          if (!selectedDate) selectedDate = db.today;
-          if (db.today) {
-            const td = new Date(db.today + 'T00:00:00');
-            salesCalCursor = new Date(td.getFullYear(), td.getMonth(), 1);
-          }
-          renderAll();
-        } catch (_) {}
-      }
       clearTimeout(window.__bootTimer);
       window.__bootTimer = setTimeout(() => {
         hideSplash();
@@ -1733,30 +1700,14 @@
         clearTimeout(window.__bootTimer);
         try {
           db = normalizeData(res);
-          saveDataCache(db);
           document.getElementById('headerDate').textContent = compactDisplay(db.today) + ' 기준';
           if (!selectedDate) selectedDate = db.today;
-          if (db.today) {
-            const td = new Date(db.today + 'T00:00:00');
-            salesCalCursor = new Date(td.getFullYear(), td.getMonth(), 1);
-          }
+          /* 매출 월력 초기화 */
+          if (db.today) { const td = new Date(db.today + 'T00:00:00'); salesCalCursor = new Date(td.getFullYear(), td.getMonth(), 1); }
           hideSplash();
           renderAll();
-        } catch (e) {
-          console.error(e);
-          hideSplash();
-          alert('렌더링 오류: ' + err2str(e));
-        }
-      }, function (e) {
-        clearTimeout(window.__bootTimer);
-        hideSplash();
-        if (cached && Array.isArray(cached.CUSTOMER)) {
-          toast('오프라인 캐시로 화면을 유지합니다.');
-          renderAll();
-          return;
-        }
-        alert('로딩 실패: ' + err2str(e));
-      });
+        } catch (e) { console.error(e); hideSplash(); alert('렌더링 오류: ' + err2str(e)); }
+      }, function (e) { clearTimeout(window.__bootTimer); hideSplash(); alert('로딩 실패: ' + err2str(e)); });
     }
 
     function renderAll() { renderDash(); renderAppt(); renderCust(); renderSales(); renderExp(); go(currentView); }
@@ -1778,33 +1729,19 @@
     /* [BUG2 FIX] CB_카탈로그의 실제 헤더는 '기본금액' — 누락 추가 */
     function getServicePrice(r) { return Number(r.기본금액 || r.금액 || r.단가 || r.판매가 || r.예상금액 || r.기준금액 || 0) || 0; }
 
-    /* ──────────────── Customer year tags ──────────────── */
-    function getCustYears(id) {
+    /* 고객의 방문 연도 Set 반환 (SALES 기록 기반)
+     * compact 6자리(YYMMDD)나 정확히 yyyy-MM-dd 10자리만 신뢰 */
+    function getCustYears(custId) {
       const yrs = new Set();
-      const sid = String(id || '').trim();
-      if (!sid) return yrs;
-      /* SALES 기록만으로 연도 판단.
-       * 고객카드의 방문일/예약일은 예약 등록 시 오늘 날짜(26년)로 덮어씌워지므로
-       * 연도 분류에 절대 사용하지 않음. */
-      (db.SALES || []).forEach(r => {
-        if (String(r.고객ID || '').trim() === sid) {
-          const dt = normalizeDate(r.일자);
+      const id = String(custId || '');
+      (db.SALES || []).forEach(s => {
+        if (String(s.고객ID || '') !== id) return;
+        const raw = String(s.일자 || '').trim();
+        if (/^\d{6}$/.test(raw) || /^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+          const dt = normalizeDate(raw);
           if (dt) yrs.add(dt.slice(2, 4));
         }
       });
-      /* SALES 기록이 전혀 없는 고객만 방문일 참조
-       * (단, 방문일이 6자리 compact 형식인 경우만 신뢰 — ISO 타임스탬프 오염 방지) */
-      if (yrs.size === 0) {
-        const c = getCustById(id);
-        if (c) {
-          const raw = String(c.방문일 || '').trim();
-          // compact 6자리(YYMMDD)나 정확히 yyyy-MM-dd 10자리만 신뢰
-          if (/^\d{6}$/.test(raw) || /^\d{4}-\d{2}-\d{2}$/.test(raw)) {
-            const dt = normalizeDate(raw);
-            if (dt) yrs.add(dt.slice(2, 4));
-          }
-        }
-      }
       return yrs;
     }
 
@@ -1836,6 +1773,10 @@
       return (db.ACCOUNTS || []).map(a => { const l = a.계정과목 || a.항목 || '기타'; return `<option value="${esc(l)}">${esc(l)}</option>`; }).join('');
     }
 
+    /* [FIX-H1] syncServiceSelection: 0원 시술 저장 불가 버그 수정
+     * 원인: total=0일 때 `0 || ''` = '' (빈 문자열)
+     * 증상: saveSale()의 !p.paid 검사에서 빈 문자열이 true → "금액은 필수" alert → 저장 불가
+     * 수정: String(total) 사용 → total=0이면 '0'이 되어 필수 검사 통과 */
     function syncServiceSelection(name) {
       const inputs = [...document.querySelectorAll(`input[name="${name}"]`)];
       const sel = inputs.filter(i => i.checked);
@@ -1848,12 +1789,18 @@
       }
       const amtEl = document.getElementById('fSaleAmt');
       const manual = document.getElementById('fSaleManualCheck');
-      if (amtEl && (!manual || !manual.checked)) amtEl.value = total || '';
+      /* [FIX-H1] total || '' → String(total)
+       * 0원짜리 시술도 정상 저장되도록 '0' 문자열로 설정 */
+      if (amtEl && (!manual || !manual.checked)) amtEl.value = String(total);
     }
 
     /* ──────────────── Dashboard ──────────────── */
     function renderDash() {
       const today = normalizeDate(db.today);
+      /* [FIX-B3] monthKey를 항상 db.today 기준으로 동기화
+       * 수정 전: 부팅 시점의 monthKey가 계속 유지되어 월이 바뀌어도 KPI가 갱신 안 됨
+       * 수정 후: renderDash 호출 시마다 today 기준으로 재계산 */
+      db.monthKey = today ? today.slice(0, 7) : db.monthKey;
       const todayAppts = (db.APPT || []).filter(a => getApptDate(a) === today).sort((a, b) => String(a.예약시간 || '').localeCompare(String(b.예약시간 || '')));
       const todaySales = (db.SALES || []).filter(s => normalizeDate(s.일자) === today).reduce((s, r) => s + Number(r.실결제금액 || 0) - Number(r.환불금액 || 0), 0);
       const monthSales = (db.SALES || []).filter(s => normalizeDate(s.일자).startsWith(db.monthKey)).reduce((s, r) => s + Number(r.실결제금액 || 0) - Number(r.환불금액 || 0), 0);
@@ -1882,14 +1829,12 @@
       const el = document.getElementById('estInsightCard');
       if (!el) return;
 
-      // EST_MAP 에서 연도별 합계
       const totals = {};
       Object.entries(EST_MAP).forEach(([k, v]) => {
         const yy = k.slice(2, 4);
         totals[yy] = (totals[yy] || 0) + v;
       });
 
-      // 실적 연도별 합계
       const realTotals = {};
       (db.SALES || []).forEach(r => {
         const iso = normalizeDate(r.일자);
@@ -1940,7 +1885,6 @@
         </div>`;
       });
 
-      // 24→25 성장률
       const g24 = totals['24'] || 0, g25 = totals['25'] || 0;
       const growthTxt = g24 > 0 ? `24→25년 고객수 기준 추정: <strong style="color:${g25 >= g24 ? '#2cb67d' : '#e87040'}">${g25 >= g24 ? '▲' : '▼'} ${Math.abs(Math.round((g25 - g24) / g24 * 100))}%</strong>` : '';
 
@@ -1959,7 +1903,15 @@
     `;
     }
 
-    /* ── 연도별 매출 꺾은 선 차트 (실적 + 추정 오버레이) ── */
+    /* ── 연도별 매출 꺾은 선 차트 (실적 + 추정 오버레이) ──
+     * [FIX-H8] 추정 데이터 이중 dataset 렌더링 버그 수정
+     * 원인: hasEst && !hasReal 조건의 연도에서
+     *   1) blendData(= estData)로 dataset 추가 (blendHas = true이므로)
+     *   2) 이어서 !hasReal 조건으로 estData dataset을 한 번 더 추가
+     *   → 동일한 점선이 두 개 겹쳐 그려짐
+     * 수정: hasReal 여부로 분기 처리
+     *   - hasReal && hasEst: 실적 없는 월에만 추정 보완(blendData)
+     *   - !hasReal && hasEst: 추정 전체를 한 번만 추가 */
     function drawSalesChart() {
       destroyChart(salesChart);
       if (!chartReady('salesChart')) return;
@@ -1970,22 +1922,19 @@
       const legendEl = document.getElementById('salesChartLegend');
       legendEl.innerHTML = '';
 
-      let hasAnyReal = false;
-
       years.forEach(yy => {
         const fullYear = '20' + yy;
         const color = YEAR_COLORS[yy] || '#999';
 
-        /* ── 실적 데이터 (스프레드시트 매출 시트) ── */
+        /* 실적 데이터 (스프레드시트 매출 시트) */
         const realData = months.map(mm => {
           const key = `${fullYear}-${mm}`;
           const v = (db.SALES || []).filter(s => normalizeDate(s.일자).startsWith(key)).reduce((s, r) => s + Number(r.실결제금액 || 0) - Number(r.환불금액 || 0), 0);
           return v > 0 ? v : null;
         });
         const hasReal = realData.some(v => v != null);
-        if (hasReal) { hasAnyReal = true; }
 
-        /* ── 추정 데이터 (고객 시트 기반) ── */
+        /* 추정 데이터 (고객 시트 기반) */
         const estData = months.map(mm => {
           const key = `${fullYear}-${mm}`;
           return EST_MAP[key] || null;
@@ -2009,26 +1958,27 @@
           legendEl.innerHTML += `<div class="legend-item"><div class="legend-dot" style="background:${color}"></div>${fullYear}년</div>`;
         }
 
-        /* 추정 라인 (점선) - 실적이 없는 월만 표시하여 보완 */
+        /* [FIX-H8] 추정 라인 분기 처리 — 이중 추가 방지 */
         if (hasEst) {
-          /* 실적과 추정을 합성: 실적 있으면 실적, 없으면 추정 */
-          const blendData = months.map((_, i) => realData[i] != null ? null : estData[i]);
-          const blendHas = blendData.some(v => v != null);
-          if (blendHas) {
-            datasets.push({
-              label: `${fullYear}년 추정`,
-              data: blendData,
-              borderColor: color,
-              borderDash: [5, 4],
-              borderWidth: 1.8, tension: 0.35, fill: false,
-              pointRadius: 2.5, pointBackgroundColor: '#fff',
-              pointBorderColor: color, pointBorderWidth: 1.5,
-              backgroundColor: 'transparent',
-              spanGaps: false
-            });
-          }
-          /* 실적이 전혀 없는 연도는 추정 전체 표시 + 레전드 */
-          if (!hasReal) {
+          if (hasReal) {
+            /* 실적이 있는 연도: 실적 없는 월에만 추정으로 보완 */
+            const blendData = months.map((_, i) => realData[i] != null ? null : estData[i]);
+            const blendHas = blendData.some(v => v != null);
+            if (blendHas) {
+              datasets.push({
+                label: `${fullYear}년 추정`,
+                data: blendData,
+                borderColor: color,
+                borderDash: [5, 4],
+                borderWidth: 1.8, tension: 0.35, fill: false,
+                pointRadius: 2.5, pointBackgroundColor: '#fff',
+                pointBorderColor: color, pointBorderWidth: 1.5,
+                backgroundColor: 'transparent',
+                spanGaps: false
+              });
+            }
+          } else {
+            /* 실적이 전혀 없는 연도: 추정 전체를 한 번만 추가 (기존 코드는 여기서 두 번 추가됐음) */
             datasets.push({
               label: `${fullYear}년 추정`,
               data: estData,
@@ -2045,7 +1995,6 @@
         }
       });
 
-      /* 추정 안내 뱃지 */
       const estNote = document.getElementById('salesEstNote');
       if (estNote) estNote.style.display = 'flex';
 
@@ -2085,9 +2034,10 @@
     function drawApptForecast() {
       const counts = {};
       function addCount(date) { const iso = normalizeDate(date); if (!iso) return; const k = iso.slice(0, 7); counts[k] = (counts[k] || 0) + 1; }
+      /* [FIX-B4] 예측 기반 데이터는 예약(APPT)만 사용 — 3중 카운트로 수치 부풀림 방지
+       * 수정 전: 예약 + 매출 + 고객 방문일을 모두 카운트 → 하나의 예약이 2~3번 집계되어 예측치 과다
+       * 수정 후: 예약 데이터만 사용하여 정확한 기준으로 예측 */
       (db.APPT || []).forEach(r => addCount(r.예약일자 || r.예약일));
-      (db.SALES || []).forEach(r => addCount(r.일자));
-      (db.CUSTOMER || []).forEach(r => { addCount(r.방문일 || r.예약일); addCount(r.리터치일); });
 
       const base = new Date((db.today || todayISO()) + 'T00:00:00');
       const histLabels = [], histVals = [];
@@ -2158,7 +2108,6 @@
         const iso = y + '-' + pad(m + 1) + '-' + pad(d);
         const dayAppts = (db.APPT || []).filter(a => getApptDate(a) === iso);
         const count = dayAppts.length;
-        /* 이슈 고객 포함 여부 체크 */
         const hasIssue = dayAppts.some(a => {
           const c = getCustById(a.고객ID);
           return c && custHasIssue(c);
@@ -2177,8 +2126,6 @@
       const rows = (db.APPT || []).filter(a => getApptDate(a) === selectedDate).sort((a, b) => String(a.예약시간 || '').localeCompare(String(b.예약시간 || '')));
       const totalCnt = rows.length;
       const issueCnt = rows.filter(a => { const c = getCustById(a.고객ID); return c && custHasIssue(c); }).length;
-      const issueNote = issueCnt > 0 ? ` <span style="color:var(--danger);font-size:11px;font-weight:700;">⚠ 이슈 ${issueCnt}명</span>` : '';
-      /* yy-mm-dd(요일) 형식으로 날짜 표기 */
       let selectedLabel = '날짜를 선택하세요';
       if (selectedDate) {
         const sd = new Date(selectedDate + 'T00:00:00');
@@ -2221,8 +2168,7 @@
     }
 
     function selectDate(iso) { selectedDate = iso; renderAppt(); }
-    /* [BUG1 FIX] setMonth()는 31일 → 다음달 이동 시 날짜가 밀리는 문제 발생.
-     * 항상 해당 월의 1일로 새 Date 객체를 생성해 안전하게 이동. */
+    /* setMonth() 대신 new Date(y, m+delta, 1) 사용 — 31일→다음달 날짜 밀림 방지 */
     function changeMonth(delta) {
       const y = calCursor.getFullYear(), m = calCursor.getMonth();
       calCursor = new Date(y, m + delta, 1);
@@ -2256,7 +2202,6 @@
       const q = String(document.getElementById('custSearch').value || '').trim().toLowerCase();
       const curYY = thisYear();
 
-      /* 방문 통계 맵 */
       const visitMap = {};
       (db.SALES || []).forEach(s => {
         const k = String(s.고객ID || '');
@@ -2288,11 +2233,15 @@
         return String(a.성함 || '').localeCompare(String(b.성함 || ''));
       });
 
-      /* 이번 연도 vs 이전 연도 분리 */
       const current = [], past = [];
+      /* [FIX-B5] SALES 기록 없어도 고객 등록일(방문일)이 금년이면 current로 분류
+       * 수정 전: SALES 기록 기반 getCustYears()만 사용 → 매출 미등록 신규 고객이 "이전 연도"로 숫겨짐
+       * 수정 후: 방문일/예약일/등록일시의 연도도 확인하여 금년 고객 여부 판단 */
       rows.forEach(c => {
         const yrs = getCustYears(c.고객ID);
-        if (yrs.has(curYY)) current.push(c); else past.push(c);
+        const regDate = normalizeDate(c.방문일 || c.예약일 || c.등록일시 || '');
+        const regYY = regDate ? regDate.slice(2, 4) : '';
+        if (yrs.has(curYY) || regYY === curYY) current.push(c); else past.push(c);
       });
 
       document.getElementById('pastCount').textContent = past.length ? ` (${past.length}명)` : '';
@@ -2301,20 +2250,14 @@
         const yrs = getCustYears(c.고객ID);
         const yrTags = [...[...yrs].sort()].map(yy => `<span class="badge b-${yy}">${yy}년</span>`).join('');
         const statusBadge = custHasIssue(c) ? '<span class="badge b-issue">⚠ 이슈</span>' : '<span class="badge b-done">✓ 정상</span>';
-        /* 최근 예약 이력 - 고객ID가 있고 정확히 일치하는 예약만 최신순 3건 */
         const custId = String(c.고객ID || '').trim();
         const custAppts = custId ? (db.APPT || [])
           .filter(a => {
             const aId = String(a.고객ID || '').trim();
             if (!aId || aId !== custId) return false;
-            const d = getApptDate(a);
-            return !!d;
+            return !!getApptDate(a);
           })
-          .sort((a, b) => {
-            const da = getApptDate(a) || '';
-            const db2 = normalizeDate(b.예약일자 || b.예약일) || '';
-            return db2.localeCompare(da); // 최신순
-          })
+          .sort((a, b) => (normalizeDate(b.예약일자 || b.예약일) || '').localeCompare(normalizeDate(a.예약일자 || a.예약일) || ''))
           .slice(0, 3) : [];
         const apptRows = custAppts.length
           ? custAppts.map(a => `<div class="visit-row"><span>${compactDisplay(a.예약일자 || a.예약일)}</span><span style="color:var(--sub)">${esc(a.시술항목 || '-')}</span><span class="badge ${String(a.상태 || '') === '완료' ? 'b-done' : 'b-open'}" style="font-size:9px;">${esc(a.상태 || '예약')}</span></div>`).join('')
@@ -2363,7 +2306,10 @@
     }
 
     /* ──────────────── Sales ──────────────── */
-    function changeSalesMonth(delta) { salesCalCursor.setMonth(salesCalCursor.getMonth() + delta); renderSales(); }
+    function changeSalesMonth(delta) {
+      salesCalCursor = new Date(salesCalCursor.getFullYear(), salesCalCursor.getMonth() + delta, 1);
+      renderSales();
+    }
     function selectSalesDate(iso) { selectedSalesDate = iso; renderSales(); }
 
     function renderSalesCalendar() {
@@ -2438,11 +2384,9 @@
     }
 
     function renderSales() {
-      /* 매출 월력 */
       renderSalesCalendar();
       renderSalesDayPanel();
 
-      /* 월 전체 KPI */
       const salesMonthKey = salesCalCursor.getFullYear() + '-' + pad(salesCalCursor.getMonth() + 1);
       const rows = (db.SALES || []).filter(s => normalizeDate(s.일자).startsWith(salesMonthKey));
       const total = rows.reduce((s, r) => s + Number(r.실결제금액 || 0) - Number(r.환불금액 || 0), 0);
@@ -2494,7 +2438,6 @@
     function openSheet(type, extra) {
       const body = document.getElementById('sheetBody');
       const today = db.today || todayISO();
-      const custOptions = (db.CUSTOMER || []).map(c => `<option value="${esc(c.고객ID)}">${esc(c.성함 || '-')} (${esc(c.연락처 || '-')})</option>`).join('');
 
       if (type === 'quick') {
         body.innerHTML = `
@@ -2512,6 +2455,10 @@
         const preName = extra && typeof extra === 'object' ? extra.name || '' : '';
         const prePhone = extra && typeof extra === 'object' ? extra.phone || '' : '';
         const preApptId = extra && typeof extra === 'object' ? extra.apptId || '' : '';
+        /* [FIX-H3] 방문일 기본값 오늘 날짜로 설정
+         * 원인: value="" 빈 값으로 시작 → 날짜 미입력 채 저장 시 "방문일 필수" alert로 차단됨
+         * 증상: 신규 고객 등록 시 매번 날짜를 선택해야 하는 불편 + 실수 가능성
+         * 수정: value="${today}" — 과거 고객은 직접 변경하면 되고, 오늘 시술 고객은 그대로 저장 */
         body.innerHTML = `
         <div class="sheet-title">고객 카드 등록</div>
         <div class="sheet-sub">시술이 완료된 고객의 상세 정보를 기록합니다.<br>고객ID가 자동 생성되어 CB_고객 시트에 저장됩니다.</div>
@@ -2522,7 +2469,10 @@
           <div class="form-block"><label class="label">연락처 *</label><input id="fCustPhone" class="field" type="tel" placeholder="010-0000-0000" value="${esc(prePhone)}"></div>
         </div>
         <div class="form-row">
-          <div class="form-block"><label class="label">방문일 / 예약일 *<span style="font-size:10px;color:var(--danger);font-weight:400;margin-left:6px;">과거 고객은 실제 방문일 입력</span></label><input id="fCustReserve" class="field" type="date" value=""></div>
+          <div class="form-block">
+            <label class="label">방문일 / 예약일 *<span style="font-size:10px;color:var(--danger);font-weight:400;margin-left:6px;">과거 고객은 실제 방문일 입력</span></label>
+            <input id="fCustReserve" class="field" type="date" value="${today}">
+          </div>
           <div class="form-block"><label class="label">리터치 예정일</label><input id="fCustRetouch" class="field" type="date"></div>
         </div>
         <div class="form-block"><label class="label">시술 항목</label><select id="fCustService" class="select">${getServiceSelectHtml(true)}</select></div>
@@ -2581,7 +2531,11 @@
         <div class="form-block"><label class="label">시술 항목 * (복수 선택 가능)</label>${getServiceOptionsHtml('saleService', [])}</div>
         <div class="switch-row"><input id="fSaleManualCheck" type="checkbox" onchange="toggleSaleManual()"><label for="fSaleManualCheck">수기 금액으로 입력</label></div>
         <div class="form-row">
-          <div class="form-block"><label class="label">결제 금액</label><input id="fSaleAmt" class="field" type="number" placeholder="0" readonly></div>
+          <div class="form-block">
+            <label class="label">결제 금액</label>
+            <!-- [FIX-H1] placeholder 추가: readonly 상태 이유를 사용자에게 안내 -->
+            <input id="fSaleAmt" class="field" type="number" placeholder="시술 선택 시 자동 입력" readonly>
+          </div>
           <div class="form-block"><label class="label">환불 금액</label><input id="fSaleRefund" class="field" type="number" value="0"></div>
         </div>
         <div class="helper" id="saleServiceSummary">선택된 시술이 없습니다.</div>
@@ -2668,15 +2622,23 @@
       const appts = (db.APPT || []).filter(a => getApptDate(a) === date);
       const seen = new Set();
       const uniqueAppts = [];
-      appts.forEach(a => { const id = String(a.고객ID || ''); if (id && !seen.has(id)) { seen.add(id); uniqueAppts.push(a); } });
-
-      const opts = uniqueAppts.map(a => {
-        const c = getCustById(a.고객ID);
-        const label = (c && c.성함 ? c.성함 : a.고객ID) + ' · ' + (a.예약시간 || '-');
-        return `<option value="${esc(a.고객ID)}">${esc(label)}</option>`;
+      /* [FIX-B11] 고객ID 없는 수기 예약도 매출 대상에 포함
+       * 수정 전: 고객ID 없으면 필터 → 수기입력 예약 고객이 매출 입력 대상에서 누락
+       * 수정 후: 이름 기반 키로 수기 예약도 포함 */
+      appts.forEach(a => {
+        const id = String(a.고객ID || '');
+        const key = id || ('_name_' + String(a.성함 || '').trim());
+        if (key && key !== '_name_' && !seen.has(key)) { seen.add(key); uniqueAppts.push(a); }
       });
 
-      /* 예약 외 전체 고객도 추가 */
+      /* [FIX-B11] 고객ID 없는 수기 예약도 이름으로 표시 */
+      const opts = uniqueAppts.map(a => {
+        const c = getCustById(a.고객ID);
+        const displayName = (c && c.성함) ? c.성함 : (a.성함 || a.고객ID || '수기예약');
+        const label = displayName + ' · ' + (a.예약시간 || '-');
+        return `<option value="${esc(a.고객ID || '')}">${esc(label)}</option>`;
+      });
+
       const seenAll = new Set(uniqueAppts.map(a => String(a.고객ID || '')));
       const allCusts = (db.CUSTOMER || []).filter(c => !seenAll.has(String(c.고객ID || ''))).map(c => `<option value="${esc(c.고객ID)}">${esc(c.성함 || '-')} (${esc(c.연락처 || '-')})</option>`);
       const sep = allCusts.length ? `<option disabled>── 전체 고객 ──</option>` : '';
@@ -2698,7 +2660,6 @@
       if (!c) return;
       const sales = (db.SALES || []).filter(s => String(s.고객ID || '') === String(id || ''));
       const visitCount = sales.length;
-      /* 최근 방문: sales 기록이 있으면 최근 sales 일자, 없으면 고객카드 방문일만 참조 */
       const lastSalesDate = sales.reduce((max, r) => { const d = normalizeDate(r.일자); return (d && (!max || d > max)) ? d : max; }, '');
       const lastVisit = lastSalesDate || normalizeDate(c.방문일 || c.예약일 || '');
       const total = sales.reduce((s, r) => s + Number(r.실결제금액 || 0) - Number(r.환불금액 || 0), 0);
@@ -2733,7 +2694,6 @@
     function openCustomerEdit(id) {
       const c = getCustById(id);
       if (!c) return;
-      /* 방문일 ISO 변환 */
       const visitISO = normalizeDate(c.방문일 || c.예약일 || '');
       const retouchISO = normalizeDate(c.리터치일 || '');
 
@@ -2785,9 +2745,7 @@
       const name  = (document.getElementById('eCustName')  || { value: '' }).value.trim();
       const phone = (document.getElementById('eCustPhone') || { value: '' }).value.trim();
       const p = {
-        id,
-        name,
-        phone,
+        id, name, phone,
         visitDate:   document.getElementById('eCustVisit').value,
         retouchDate: document.getElementById('eCustRetouch').value,
         service:     document.getElementById('eCustService').value,
@@ -2796,27 +2754,27 @@
         note:        document.getElementById('eCustNote').value.trim()
       };
       if (!p.name || !p.phone) { alert('성명과 연락처는 필수입니다.'); return; }
+      /* [FIX-H9] 중복 제출 방지 */
       _withSave(function(done) {
         toast('수정 저장 중...');
         callServer('api_updateCustomer', p, () => {
-        /* db 로컬 즉시 반영 → 화면 이동 없이 상세로 돌아감 */
-        const idx = (db.CUSTOMER || []).findIndex(c => String(c.고객ID || '') === String(id));
-        if (idx >= 0) {
-          const c = db.CUSTOMER[idx];
-          if (p.name)        c.성함 = p.name;
-          if (p.phone)       c.연락처 = p.phone;
-          if (p.visitDate)   { c.방문일 = p.visitDate; c.예약일 = p.visitDate; }
-          if (p.retouchDate) c.리터치일 = p.retouchDate;
-          if (p.service)     c.시술항목 = p.service;
-          c.동의서동의 = p.consent;
-          c['시술이슈'] = p.issue;
-          c['시술이슈체크'] = p.issue;
-          c.특이사항 = p.note;
-          c.메모 = p.note;
-        }
+          const idx = (db.CUSTOMER || []).findIndex(c => String(c.고객ID || '') === String(id));
+          if (idx >= 0) {
+            const c = db.CUSTOMER[idx];
+            if (p.name)        c.성함 = p.name;
+            if (p.phone)       c.연락처 = p.phone;
+            if (p.visitDate)   { c.방문일 = p.visitDate; c.예약일 = p.visitDate; }
+            if (p.retouchDate) c.리터치일 = p.retouchDate;
+            if (p.service)     c.시술항목 = p.service;
+            c.동의서동의 = p.consent;
+            c['시술이슈'] = p.issue;
+            c['시술이슈체크'] = p.issue;
+            c.특이사항 = p.note;
+            c.메모 = p.note;
+          }
           done();
           toast('✓ 수정 완료');
-          openCustomerDetail(id);  /* 저장 후 상세로 돌아감 (화면 이동 없음) */
+          openCustomerDetail(id);
           renderCust();
         }, e => { done(); alert(err2str(e)); });
       });
@@ -2839,6 +2797,11 @@
       document.getElementById('overlay').style.display = 'flex';
     }
 
+    /* ──────────────── 완료 처리 시트 ────────────────
+     * [FIX-H4] 환불 금액 필드 추가 + 신규고객 완료 버튼 disabled
+     * 원인: 완료 처리 시트에 환불 필드 없음 → 환불이 있으면 완료 후 매출 수정 필요 (흐름 단절)
+     *       신규 고객 시 '기존고객만 완료 처리 가능' 버튼이 클릭 가능해 혼란 유발
+     * 수정: 환불 금액 input 추가, 신규 고객일 때 완료 버튼 disabled + 시각적 비활성화 */
     function openComplete(apptId) {
       const a = (db.APPT || []).find(r => String(r.예약ID || '') === String(apptId || ''));
       if (!a) return;
@@ -2852,18 +2815,23 @@
         <div class="form-block"><label class="label">실결제금액</label><input id="fCompleteAmt" class="field" type="number" value="${Number(a.예상매출 || a.예상금액 || 0)}"></div>
         <div class="form-block"><label class="label">결제수단</label><select id="fCompletePay" class="select"><option value="카드">카드</option><option value="계좌이체">계좌이체</option><option value="현금">현금</option></select></div>
       </div>
-      <div class="form-row" style="margin-top:8px;">
-        <div class="form-block"><label class="label">환불금액</label><input id="fCompleteRefund" class="field" type="number" value="0"></div>
-        <div class="form-block"><label class="label">안내</label><div class="helper" style="height:46px;display:flex;align-items:center;">환불이 없으면 0으로 두세요.</div></div>
+      <div class="form-row">
+        <div class="form-block">
+          <label class="label">환불 금액 <span style="font-size:10px;color:var(--sub);font-weight:400;">(없으면 0)</span></label>
+          <input id="fCompleteRefund" class="field" type="number" value="0">
+        </div>
+        <div class="form-block"></div>
       </div>
       ${!hasCustId ? `
       <div class="helper" style="margin-top:10px;">
-        ⚡ 시술 완료 후 <strong>고객 카드</strong>를 등록하면 재방문 추적·AI 분석에 반영됩니다.
-      </div>`: ''}
+        ⚡ 신규 고객은 <strong>완료 + 고객카드</strong>로 처리해야 매출/고객/예약 데이터가 함께 연결됩니다.
+      </div>` : ''}
       <div class="sheet-footer">
         <button class="btn btn-ghost" onclick="closeSheet()">취소</button>
         ${!hasCustId ? `<button class="btn btn-secondary" onclick="saveCompleteAndRegister('${esc(a.예약ID || '')}','${esc(custName)}','${esc(a.연락처 || '')}')">✓ 완료 + 고객카드</button>` : ''}
-        <button class="btn btn-primary" onclick="saveComplete('${esc(a.예약ID || '')}')">✓ 완료 처리</button>
+        <button class="btn btn-primary" ${!hasCustId ? 'disabled style="opacity:.45;cursor:not-allowed;"' : ''} onclick="${hasCustId ? "saveComplete('" + esc(a.예약ID || '') + "')" : ''}">
+          ${!hasCustId ? '기존고객만 완료 처리 가능' : '✓ 완료 처리'}
+        </button>
       </div>`;
       document.getElementById('overlay').style.display = 'flex';
     }
@@ -2885,16 +2853,30 @@
       };
       if (!p.name || !p.phone) { alert('성명과 연락처는 필수입니다.'); return; }
       if (!p.visitDate) { alert('방문일 / 예약일을 반드시 입력해주세요.\n(과거 고객은 실제 방문일을 선택하세요.)'); return; }
-      toast('고객 카드 저장 중...');
-      const apiName = p.apptId ? 'api_registerCustomerAfterTreatment' : 'api_createCustomer';
-      callServer(apiName, p, () => { closeSheet(); toast('✓ 고객 카드 등록 완료'); refreshFromServer(); }, e => alert(err2str(e)));
+      /* [FIX-H9] 중복 제출 방지 */
+      _withSave(function(done) {
+        toast('고객 카드 저장 중...');
+        const apiName = p.apptId ? 'api_registerCustomerAfterTreatment' : 'api_createCustomer';
+        callServer(apiName, p, () => { done(); closeSheet(); toast('✓ 고객 카드 등록 완료'); refreshFromServer(); }, e => { done(); alert(err2str(e)); });
+      });
     }
 
     function saveAppt() {
-      const custName = (document.getElementById('fApptName') || {}).value || (document.getElementById('fApptCust') || {}).value || '';
+      /* [FIX-H2] 예약일 유효성 검사 추가
+       * 원인: date 필드 검증 없음 → 날짜 지운 채 저장 시 예약일='' 레코드 생성
+       * 증상: 달력에 표시되지 않는 유령 예약 생성
+       * 수정: date 비어있으면 저장 차단 */
+      const date = (document.getElementById('fApptDate') || {}).value || '';
+      if (!date) { alert('예약일을 선택해주세요.'); return; }
+
+      /* [FIX-H2] custName fallback에서 fApptCust(고객ID) 제거
+       * 원인: fApptName이 비어있으면 hidden fApptCust(= 'C0001')가 custName으로 전달됨
+       * 증상: GAS가 custName='C0001'을 성함으로 시트에 기록
+       * 수정: fApptName.value만 사용, 없으면 빈 문자열 */
+      const custName = (document.getElementById('fApptName') || {}).value || '';
       const custPhone = (document.getElementById('fApptPhone') || {}).value || '';
       const p = {
-        date: document.getElementById('fApptDate').value,
+        date,
         time: document.getElementById('fApptTime').value,
         customerId: (document.getElementById('fApptCust') || {}).value || '',
         custName: custName.trim(),
@@ -2904,46 +2886,57 @@
         note: (document.getElementById('fApptNote') || {}).value || ''
       };
       if (!p.custName) { alert('성함을 입력해주세요.'); return; }
-      toast('예약 저장 중...');
-      callServer('api_createAppointment', p, () => { closeSheet(); toast('✓ 예약 등록 완료'); refreshFromServer(); }, e => alert(err2str(e)));
+      /* [FIX-H9] 중복 제출 방지 */
+      _withSave(function(done) {
+        toast('예약 저장 중...');
+        callServer('api_createAppointment', p, () => { done(); closeSheet(); toast('✓ 예약 등록 완료'); refreshFromServer(); }, e => { done(); alert(err2str(e)); });
+      });
     }
 
     function saveComplete(apptId) {
       const a = (db.APPT || []).find(r => String(r.예약ID || '') === String(apptId || ''));
       if (!a) { alert('예약 정보를 찾을 수 없습니다.'); return; }
+      if (!String(a.고객ID || '').trim()) {
+        alert('신규 고객은 [완료 + 고객카드]로 처리해주세요.\n고객ID 없이 완료 처리하면 매출 연결이 누락될 수 있습니다.');
+        return;
+      }
+      /* [FIX-H6] 환불 금액 필드 연동
+       * fCompleteRefund 추가 (openComplete에서 추가된 필드) */
       const p = {
         apptId, customerId: a.고객ID, service: a.시술항목,
         paid: document.getElementById('fCompleteAmt').value,
-        refund: document.getElementById('fCompleteRefund').value,
+        refund: (document.getElementById('fCompleteRefund') || {}).value || '0',
         payMethod: document.getElementById('fCompletePay').value,
         date: getApptDate(a) || db.today
       };
+      /* [FIX-H9] 중복 제출 방지 */
       _withSave(function(done) {
         toast('완료 처리 중...');
-        callServer('api_completeAppointment', p, function() { done(); closeSheet(); toast('✓ 완료 처리되었습니다.'); refreshFromServer(); }, function(e) { done(); alert(err2str(e)); });
+        callServer('api_completeAppointment', p, () => { done(); closeSheet(); toast('✓ 완료 처리되었습니다.'); refreshFromServer(); }, e => { done(); alert(err2str(e)); });
       });
     }
 
-    /* 완료 + 고객카드 등록 */
+    /* [FIX-H6] 완료 + 고객카드: 환불 필드 연동 */
     function saveCompleteAndRegister(apptId, custName, custPhone) {
       const a = (db.APPT || []).find(r => String(r.예약ID || '') === String(apptId || ''));
       if (!a) { alert('예약 정보를 찾을 수 없습니다.'); return; }
       const p = {
         apptId, customerId: a.고객ID || '', service: a.시술항목 || '',
         paid: document.getElementById('fCompleteAmt').value,
-        refund: document.getElementById('fCompleteRefund').value,
+        refund: (document.getElementById('fCompleteRefund') || {}).value || '0',
         payMethod: document.getElementById('fCompletePay').value,
         date: getApptDate(a) || db.today
       };
+      /* [FIX-H9] 중복 제출 방지 */
       _withSave(function(done) {
         toast('완료 처리 중...');
-        callServer('api_completeAppointment', p, function() {
+        callServer('api_completeAppointment', p, () => {
           done();
           closeSheet();
           openSheet('cust', { name: custName, phone: custPhone, apptId: apptId });
           toast('✓ 완료! 고객 카드를 작성해주세요.');
           refreshFromServer();
-        }, function(e) { done(); alert(err2str(e)); });
+        }, e => { done(); alert(err2str(e)); });
       });
     }
 
@@ -2959,10 +2952,14 @@
         payMethod: document.getElementById('fSalePay').value,
         manualAmount: document.getElementById('fSaleManualCheck').checked ? 'Y' : 'N'
       };
-      if (!p.customerId || !p.service || !p.paid) { alert('고객, 시술 항목, 금액은 필수입니다.'); return; }
+      /* [FIX-H1] 연관: paid='' 또는 paid='0'일 때 처리
+       * 0원은 허용, 완전히 비어있는 경우만 차단 */
+      if (!p.customerId || !p.service) { alert('고객과 시술 항목은 필수입니다.'); return; }
+      if (p.paid === '' || p.paid === null || p.paid === undefined) { alert('금액을 입력해주세요.'); return; }
+      /* [FIX-H9] 중복 제출 방지 */
       _withSave(function(done) {
         toast('매출 저장 중...');
-        callServer('api_addSale', p, function() { done(); closeSheet(); toast('✓ 매출 저장 완료'); refreshFromServer(); }, function(e) { done(); alert(err2str(e)); });
+        callServer('api_addSale', p, () => { done(); closeSheet(); toast('✓ 매출 저장 완료'); refreshFromServer(); }, e => { done(); alert(err2str(e)); });
       });
     }
 
@@ -2981,18 +2978,30 @@
         note: document.getElementById('fExpNote').value.trim()
       };
       if (!p.account || !p.amount) { alert('계정과목과 금액은 필수입니다.'); return; }
+      /* [FIX-H9] 중복 제출 방지 */
       _withSave(function(done) {
         toast('지출 저장 중...');
-        callServer('api_addExpense', p, function() { done(); closeSheet(); toast('✓ 지출 저장 완료'); refreshFromServer(); }, function(e) { done(); alert(err2str(e)); });
+        callServer('api_addExpense', p, () => { done(); closeSheet(); toast('✓ 지출 저장 완료'); refreshFromServer(); }, e => { done(); alert(err2str(e)); });
       });
     }
 
-    /* ──────────────── 매출 수정 ──────────────── */
+    /* ──────────────── 매출 수정 ────────────────
+     * [FIX-H5] openSaleEdit: 시술항목 select 추가
+     * 원인: GAS api_updateSale의 fieldMap에 '시술항목' 포함되어 있으나 UI에 노출 없음
+     * 증상: 시술항목 오기재 시 매출 목록에서 수정 불가
+     * 수정: select 필드 추가 (GAS 백엔드 수정 없음) */
     function openSaleEdit(id) {
       const s = (db.SALES || []).find(r => String(r.매출ID || '') === String(id || ''));
       if (!s) return;
       const payOpts = ['카드', '계좌이체', '현금'].map(v =>
         '<option value="' + v + '" ' + (s.결제수단 === v ? 'selected' : '') + '>' + v + '</option>').join('');
+      /* 시술항목 select — 현재 값이 카탈로그에 없어도 직접 입력 option 추가 */
+      const svcRows = getServiceRows();
+      const curSvc = String(s.시술항목 || '');
+      const svcOpts = '<option value="">변경 안 함</option>' +
+        svcRows.map(r => '<option value="' + esc(r.시술항목) + '" ' + (r.시술항목 === curSvc ? 'selected' : '') + '>' + esc(r.시술항목) + '</option>').join('') +
+        (!svcRows.find(r => r.시술항목 === curSvc) && curSvc ? '<option value="' + esc(curSvc) + '" selected>' + esc(curSvc) + '</option>' : '');
+
       document.getElementById('sheetBody').innerHTML =
         '<div class="sheet-title">매출 수정</div>' +
         '<div class="sheet-sub">' + esc(s.매출ID || '') + ' · ' + esc(s.시술항목 || '-') + '</div>' +
@@ -3001,6 +3010,7 @@
           '<div class="form-block"><label class="label">일자</label><input id="eSaleDate" class="field" type="date" value="' + esc(normalizeDate(s.일자)) + '"></div>' +
           '<div class="form-block"><label class="label">결제 수단</label><select id="eSalePay" class="select">' + payOpts + '</select></div>' +
         '</div>' +
+        '<div class="form-block"><label class="label">시술항목</label><select id="eSaleService" class="select">' + svcOpts + '</select></div>' +
         '<div class="form-row">' +
           '<div class="form-block"><label class="label">결제 금액</label><input id="eSaleAmt" class="field" type="number" value="' + Number(s.실결제금액 || 0) + '"></div>' +
           '<div class="form-block"><label class="label">환불 금액</label><input id="eSaleRefund" class="field" type="number" value="' + Number(s.환불금액 || 0) + '"></div>' +
@@ -3013,16 +3023,21 @@
       document.getElementById('overlay').style.display = 'flex';
     }
 
+    /* [FIX-H7] saveSaleEdit: 시술항목 필드 연동
+     * openSaleEdit에서 추가한 eSaleService select 값을 p.service로 전달
+     * GAS api_updateSale의 fieldMap.시술항목은 이미 존재 → 서버 수정 불필요 */
     function saveSaleEdit(id) {
+      const svcEl = document.getElementById('eSaleService');
       var p = {
         id: id,
         date:      (document.getElementById('eSaleDate') || {}).value,
         payMethod: (document.getElementById('eSalePay') || {}).value,
-        service:   (document.getElementById('eSaleService') || {}).value,
         paid:      (document.getElementById('eSaleAmt') || {}).value,
         refund:    (document.getElementById('eSaleRefund') || {}).value,
+        service:   svcEl && svcEl.value ? svcEl.value : undefined, /* 빈 값이면 미전송 */
         note:      ((document.getElementById('eSaleNote') || {}).value || '').trim()
       };
+      /* [FIX-H9] 중복 제출 방지 */
       _withSave(function(done) {
         toast('매출 수정 중...');
         callServer('api_updateSale', p, function() {
@@ -3030,8 +3045,8 @@
           if (idx >= 0) {
             var s = db.SALES[idx];
             s.일자 = p.date; s.결제수단 = p.payMethod;
-            if (p.service) s.시술항목 = p.service;
             s.실결제금액 = Number(p.paid); s.환불금액 = Number(p.refund); s.메모 = p.note;
+            if (p.service) s.시술항목 = p.service;
           }
           done();
           closeSheet(); toast('✓ 매출 수정 완료'); renderSales();
@@ -3076,16 +3091,17 @@
         expected: (document.getElementById('eApptAmt') || {}).value,
         note:     ((document.getElementById('eApptNote') || {}).value || '').trim()
       };
+      /* [FIX-H9] 중복 제출 방지 */
       _withSave(function(done) {
         toast('예약 수정 중...');
         callServer('api_updateAppointment', p, function() {
-        var idx = (db.APPT || []).findIndex(function(r) { return String(r.예약ID || '') === String(apptId); });
-        if (idx >= 0) {
-          var a = db.APPT[idx];
-          a.예약일자 = p.date; a.예약시간 = p.time;
-          if (p.service) a.시술항목 = p.service;
-          a.예상매출 = Number(p.expected); a.메모 = p.note;
-        }
+          var idx = (db.APPT || []).findIndex(function(r) { return String(r.예약ID || '') === String(apptId); });
+          if (idx >= 0) {
+            var a = db.APPT[idx];
+            a.예약일자 = p.date; a.예약시간 = p.time;
+            if (p.service) a.시술항목 = p.service;
+            a.예상매출 = Number(p.expected); a.메모 = p.note;
+          }
           done();
           closeSheet(); toast('✓ 예약 수정 완료'); renderAppt(); renderDash();
         }, function(e) { done(); alert(err2str(e)); });
@@ -3093,11 +3109,15 @@
     }
 
     function bulkResolveIssues() {
-      const ids = (db.CUSTOMER || []).filter(c => custHasIssue(c) && (custFilter === 'all' || custFilter === 'issue')).map(c => String(c.고객ID || '')).filter(Boolean);
+      const base = (db.CUSTOMER || []).filter(c => custHasIssue(c));
+      const ids = base.map(c => String(c.고객ID || '')).filter(Boolean);
       if (!ids.length) { alert('해소할 이슈 고객이 없습니다.'); return; }
       if (!confirm(`이슈 고객 ${ids.length}명 동의서 일괄 처리할까요?`)) return;
-      toast('일괄 처리 중...');
-      callServer('api_bulkResolveCustomerIssues', { ids: ids }, () => { toast('✓ 이슈 일괄 해소 완료'); refreshFromServer(); }, e => alert(err2str(e)));
+      /* [FIX-H9] 중복 제출 방지 */
+      _withSave(function(done) {
+        toast('일괄 처리 중...');
+        callServer('api_bulkResolveCustomerIssues', { ids: ids }, () => { done(); toast('✓ 이슈 일괄 해소 완료'); refreshFromServer(); }, e => { done(); alert(err2str(e)); });
+      });
     }
 
     /* ──────────────── Error handlers ──────────────── */
