@@ -1524,7 +1524,7 @@
 
     <script>
         /*════════════════════════════════════
-         *  COZY BROW CRM v5.1
+         *  COZY BROW CRM v5.2
          *  index.html  — GAS 웹앱 전용 빌드
          *
          *  수정 이력 v5.1:
@@ -2998,7 +2998,10 @@
         <div class="detail-box full"><div class="detail-label">증빙링크</div><div class="detail-value">${linkHtml}</div></div>
         <div class="detail-box full"><div class="detail-label">메모</div><div class="detail-value">${esc(e.메모 || '-')}</div></div>
       </div>
-      <div class="sheet-footer"><button class="btn btn-ghost" onclick="closeSheet()">닫기</button></div>`;
+      <div class="sheet-footer">
+        <button class="btn btn-danger" onclick="deleteExpense('${esc(e.지출ID || '')}')">🗑 삭제</button>
+        <button class="btn btn-ghost" onclick="closeSheet()">닫기</button>
+      </div>`;
             document.getElementById('overlay').style.display = 'flex';
         }
 
@@ -3237,6 +3240,7 @@
                 '</div>' +
                 '<div class="form-block"><label class="label">메모</label><textarea id="eSaleNote" class="textarea">' + esc(s.메모 || '') + '</textarea></div>' +
                 '<div class="sheet-footer">' +
+                '<button class="btn btn-danger" onclick="deleteSale(\'' + esc(id) + '\')">🗑 삭제</button>' +
                 '<button class="btn btn-ghost" onclick="closeSheet()">취소</button>' +
                 '<button class="btn btn-primary" onclick="saveSaleEdit(\'' + esc(id) + '\')">💾 수정 저장</button>' +
                 '</div>';
@@ -3270,6 +3274,41 @@
                     }
                     done();
                     closeSheet(); toast('✓ 매출 수정 완료'); renderSales();
+                }, function (e) { done(); alert(err2str(e)); });
+            });
+        }
+
+        /* ──────────────── 단건 삭제 v5.2 ──────────────── */
+        function deleteSale(id) {
+            if (!id) return;
+            const s = (db.SALES || []).find(function (r) { return String(r.매출ID || '') === String(id); });
+            const label = s ? [compactDisplay(s.일자), s.성함 || getCustName(s.고객ID), s.시술항목 || '-', money(Number(s.실결제금액 || 0) - Number(s.환불금액 || 0))].join(' · ') : id;
+            if (!confirm('아래 매출 1건을 삭제하시겠습니까?\n\n' + label + '\n\n삭제 후에는 되돌릴 수 없습니다.')) return;
+
+            _withSave(function (done) {
+                toast('매출 삭제 중...');
+                callServer('api_deleteSale', { id: id }, function () {
+                    done();
+                    closeSheet();
+                    toast('✓ 매출 삭제 완료');
+                    refreshFromServer();
+                }, function (e) { done(); alert(err2str(e)); });
+            });
+        }
+
+        function deleteExpense(id) {
+            if (!id) return;
+            const e = (db.EXPENSE || []).find(function (r) { return String(r.지출ID || '') === String(id); });
+            const label = e ? [compactDisplay(e.일자), e.계정과목 || e.항목 || '-', e.거래처 || '-', money(e.금액)].join(' · ') : id;
+            if (!confirm('아래 지출 1건을 삭제하시겠습니까?\n\n' + label + '\n\n삭제 후에는 되돌릴 수 없습니다.')) return;
+
+            _withSave(function (done) {
+                toast('지출 삭제 중...');
+                callServer('api_deleteExpense', { id: id }, function () {
+                    done();
+                    closeSheet();
+                    toast('✓ 지출 삭제 완료');
+                    refreshFromServer();
                 }, function (e) { done(); alert(err2str(e)); });
             });
         }
